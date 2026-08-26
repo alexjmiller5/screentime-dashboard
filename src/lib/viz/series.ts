@@ -47,28 +47,44 @@ function axis(rows: UsageRow[]): string[] {
 	return dateRange(min, max);
 }
 
-/** Top-N apps as stacked daily series, remaining bundles folded into "Other". */
-export function dailyByApp(rows: UsageRow[], topN: number): StackedSeries {
+/** Top-N apps as stacked daily series, remaining bundles folded into "Other".
+ * `keyOf` groups bundles into chart identities (pass appName so the same app
+ * recorded under different platform ids - Chrome desktop vs Apple's unified
+ * .ios id - becomes ONE series). */
+export function dailyByApp(
+	rows: UsageRow[],
+	topN: number,
+	keyOf: (bundleId: string) => string = (b) => b
+): StackedSeries {
 	const dates = axis(rows);
 	if (dates.length === 0) return { dates: [], series: [] };
 	const index = new Map(dates.map((d, i) => [d, i]));
 
-	const keys = topApps(rows, topN).map((t) => t.bundleId);
+	const keys = topApps(rows, topN, keyOf).map((t) => t.bundleId);
 	const keySet = new Set(keys);
 	const series = [...keys, 'Other'].map((key) => ({ key, data: dates.map(() => 0) }));
 	const byKey = new Map(series.map((s) => [s.key, s.data]));
 	let hasOther = false;
 	for (const r of rows) {
-		const key = keySet.has(r.bundleId) ? r.bundleId : 'Other';
+		const mapped = keyOf(r.bundleId);
+		const key = keySet.has(mapped) ? mapped : 'Other';
 		if (key === 'Other') hasOther = true;
 		byKey.get(key)![index.get(r.date)!] += r.seconds;
 	}
 	return { dates, series: hasOther ? series : series.slice(0, -1) };
 }
 
-export function topApps(rows: UsageRow[], n: number): { bundleId: string; seconds: number }[] {
+/** Ranked totals; `bundleId` in the result is the grouped key from `keyOf`. */
+export function topApps(
+	rows: UsageRow[],
+	n: number,
+	keyOf: (bundleId: string) => string = (b) => b
+): { bundleId: string; seconds: number }[] {
 	const totals = new Map<string, number>();
-	for (const r of rows) totals.set(r.bundleId, (totals.get(r.bundleId) ?? 0) + r.seconds);
+	for (const r of rows) {
+		const key = keyOf(r.bundleId);
+		totals.set(key, (totals.get(key) ?? 0) + r.seconds);
+	}
 	return [...totals.entries()]
 		.map(([bundleId, seconds]) => ({ bundleId, seconds }))
 		.sort((a, b) => b.seconds - a.seconds || a.bundleId.localeCompare(b.bundleId))

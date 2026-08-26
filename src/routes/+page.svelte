@@ -83,8 +83,8 @@
 
 	// 8 named series = every validated palette slot; the rest folds to Other in
 	// the chart, but the ranked list below shows everything.
-	const stacked = $derived(dailyByApp(rows, 8));
-	const ranked = $derived(topApps(rows, Infinity));
+	const stacked = $derived(dailyByApp(rows, 8, appName));
+	const ranked = $derived(topApps(rows, Infinity, appName));
 
 	// Watchlist trend over the full history (the point is the long arc) across
 	// apps AND websites, smoothed with a 7-day rolling mean.
@@ -281,9 +281,9 @@
 				</Button>
 			</div>
 			{#if showTable}
-				<DataTable data={stacked} labelFor={appName} />
+				<DataTable data={stacked} />
 			{:else}
-				<StackedChart data={stacked} kind="stacked-bar" labelFor={appName} />
+				<StackedChart data={stacked} kind="stacked-bar" />
 			{/if}
 		</section>
 
