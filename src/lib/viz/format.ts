@@ -26,8 +26,37 @@ const KNOWN: Record<string, string> = {
 	'com.anthropic.claude': 'Claude'
 };
 
+// Chrome PWAs get bundle ids of the form com.google.Chrome.app.<id>, where
+// <id> is derived from the app's start URL - the same for every machine, so
+// these are global facts, not personal config. Unknowns fold to "Chrome App".
+const PWA: Record<string, string> = {
+	agimnkijcaahngcdmfeangaknmldooml: 'YouTube (PWA)',
+	akpamiohjfcnimfljfndmaldlcfphjmp: 'Instagram (PWA)',
+	apmdllilnigbofopeodengghogjmoafp: 'LinkedIn (PWA)',
+	hgkihejciilgdpmmojeajdlkckcmnggk: 'LinkedIn (PWA)',
+	ohghonlafcimfigiajnmhdklcbjlbfda: 'LinkedIn (PWA)',
+	lodlkdfmihgonocnmddehnfgiljnadcf: 'X (PWA)',
+	poadcdkbdcdhpalbemobhgmmkoldoiej: 'X (PWA)',
+	gfgbgjphjkdhefmnmbhogcpckgpapbag: 'Snapchat (PWA)',
+	hjfgondjandamiffjejcmcnbdpcpkbpd: 'Messenger (PWA)',
+	kippjfofjhjlffjecoapiogbkgbpmgej: 'Messenger (PWA)',
+	kpfeiefnagdndcpdgnaompdkfenghibf: 'GroupMe (PWA)',
+	mnhkaebcjjhencmpkapnbdaogjamfbcj: 'Google Maps (PWA)',
+	edanbjnaiofggfmimiidpfmhggkbokck: 'Google Translate (PWA)',
+	jbeoliebicnmljhmdbbdeljdpjbfollk: 'Google Contacts (PWA)',
+	pmcngklofgngifnoceehmchjlildnhkj: 'Google Contacts (PWA)',
+	gpbngfpopffohncaippekkbcbfbkhedf: 'WordReference (PWA)',
+	jhcpobfgkhiacbheibcoilcbkoklmddb: 'WordReference (PWA)'
+};
+
+const PWA_PREFIX = 'com.google.chrome.app.';
+
 export function appName(bundleId: string): string {
-	const known = KNOWN[bundleId.toLowerCase()];
+	const lower = bundleId.toLowerCase();
+	if (lower.startsWith(PWA_PREFIX)) {
+		return PWA[lower.slice(PWA_PREFIX.length)] ?? 'Chrome App';
+	}
+	const known = KNOWN[lower];
 	if (known) return known;
 	const segment = bundleId.split('.').pop() ?? bundleId;
 	return segment.length > 0 ? segment.charAt(0).toUpperCase() + segment.slice(1) : bundleId;

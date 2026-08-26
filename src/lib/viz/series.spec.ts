@@ -88,4 +88,12 @@ describe('watchlistDaily', () => {
 			{ key: 'instagram', data: [0, 120] }
 		]);
 	});
+
+	it('matches by display name too, so PWAs count toward their app', () => {
+		const result = watchlistDaily(
+			[row('2026-01-01', 'com.google.Chrome.app.agimnkijcaahngcdmfeangaknmldooml', 300)],
+			['youtube']
+		);
+		expect(result.series).toEqual([{ key: 'youtube', data: [300] }]);
+	});
 });

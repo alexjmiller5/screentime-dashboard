@@ -17,6 +17,7 @@
 		dailyByApp,
 		topApps,
 		watchlistDaily,
+		matchesTerm,
 		rollingMean,
 		dateRange
 	} from '$lib/viz/series';
@@ -106,8 +107,7 @@
 				(acc, r) => (dates.has(r.date) && (!match || match(r.bundleId)) ? acc + r.seconds : acc),
 				0
 			);
-		const inWatchlist = (b: string): boolean =>
-			watchlist.some((t) => b.toLowerCase().includes(t.toLowerCase()));
+		const inWatchlist = (b: string): boolean => watchlist.some((t) => matchesTerm(b, t));
 		const thisWeek = sum(week(0));
 		const priorWeek = sum(week(7));
 		const watchWeek = sum(week(0), inWatchlist);
