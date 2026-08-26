@@ -30,7 +30,13 @@ export function classifyDeviceActivityFile(path: string): DeviceActivityFile | n
 export function guessDeviceLabel(events: FocusEvent[]): 'iPhone' | 'Mac' | null {
 	for (const e of events) {
 		const b = e.bundleId.toLowerCase();
-		if (b.startsWith('com.apple.springboard')) return 'iPhone';
+		if (
+			b.startsWith('com.apple.springboard') ||
+			b.startsWith('com.apple.mobile') ||
+			b.endsWith('.ios')
+		) {
+			return 'iPhone';
+		}
 		if (b === 'com.apple.finder' || b === 'com.apple.loginwindow') return 'Mac';
 	}
 	return null;

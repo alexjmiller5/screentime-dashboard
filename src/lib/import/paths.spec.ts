@@ -25,6 +25,11 @@ describe('guessDeviceLabel', () => {
 		expect(guessDeviceLabel([ev('com.apple.loginwindow')])).toBe('Mac');
 	});
 
+	it('recognizes iOS by .ios-suffixed or com.apple.mobile* bundles', () => {
+		expect(guessDeviceLabel([ev('com.google.chrome.ios')])).toBe('iPhone');
+		expect(guessDeviceLabel([ev('com.apple.mobilenotes')])).toBe('iPhone');
+	});
+
 	it('returns null when nothing platform-distinctive is present', () => {
 		expect(guessDeviceLabel([ev('com.spotify.client')])).toBeNull();
 		expect(guessDeviceLabel([])).toBeNull();
