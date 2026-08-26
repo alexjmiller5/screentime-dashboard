@@ -30,6 +30,13 @@ describe('guessDeviceLabel', () => {
 		expect(guessDeviceLabel([ev('com.apple.mobilenotes')])).toBe('iPhone');
 	});
 
+	it('Mac markers beat weak iOS hints - Messages on the Mac is com.apple.MobileSMS', () => {
+		expect(guessDeviceLabel([ev('com.apple.MobileSMS'), ev('com.apple.finder')])).toBe('Mac');
+		expect(guessDeviceLabel([ev('com.google.chrome.ios'), ev('com.apple.loginwindow')])).toBe(
+			'Mac'
+		);
+	});
+
 	it('returns null when nothing platform-distinctive is present', () => {
 		expect(guessDeviceLabel([ev('com.spotify.client')])).toBeNull();
 		expect(guessDeviceLabel([])).toBeNull();
