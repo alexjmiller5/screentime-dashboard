@@ -34,16 +34,32 @@
 		].filter((id) => eventCount(id) > 0)
 	);
 
-	// Prefill: prior label > platform guess from the events (suffixed with the
-	// short uuid when two devices guess alike) > short uuid.
+	// A stored label that is just the uuid prefix was never a real name (the
+	// old dialog's default) - don't let it shadow a platform guess.
+	const isPlaceholder = (label: string, id: string): boolean =>
+		label.toUpperCase() === id.slice(0, 8).toUpperCase();
+
+	// For Screen Time devices there are no focus events - guess from the
+	// bundle ids in their activity entries instead.
+	const guessEvents = (id: string): { tsMs: number; bundleId: string; focus: boolean }[] =>
+		scan.focusEventsByDevice[id] ??
+		(scan.deviceActivityByDevice[id] ?? []).flatMap((segment) =>
+			segment.entries
+				.filter((e) => !e.key.startsWith('web:'))
+				.map((e) => ({ tsMs: 0, bundleId: e.key, focus: true }))
+		);
+
+	// Prefill: real prior label > platform guess (suffixed with the short uuid
+	// when two devices guess alike) > short uuid.
 	let labels: Record<string, string> = $state({});
 	$effect(() => {
 		const guessed = new Set<string>();
 		labels = Object.fromEntries(
 			deviceIds.map((id) => {
-				if (initialLabels[id]) return [id, initialLabels[id]];
+				const prior = initialLabels[id];
+				if (prior && !isPlaceholder(prior, id)) return [id, prior];
 				if (id === 'knowledgec') return [id, 'Mac (knowledgeC)'];
-				const guess = guessDeviceLabel(scan.focusEventsByDevice[id] ?? []);
+				const guess = guessDeviceLabel(guessEvents(id));
 				if (guess === null) return [id, id.slice(0, 8)];
 				const label = guessed.has(guess) ? `${guess} (${id.slice(0, 8)})` : guess;
 				guessed.add(guess);
