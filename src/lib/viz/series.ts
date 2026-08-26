@@ -3,6 +3,7 @@
 // together (knowledgeC and Biome overlap for the Mac) - source is a filter.
 
 import type { UsageRow } from '../data/cache';
+import { appName } from './format';
 
 export interface RowFilter {
 	source: UsageRow['source'];
@@ -86,15 +87,21 @@ export function rollingMean(values: number[], window: number): number[] {
 	return out;
 }
 
-/** Daily seconds per watchlist term (case-insensitive bundle substring). */
+/** True when a bundle counts toward a watchlist term: matches the bundle id
+ * OR the display name, so PWAs ("YouTube (PWA)") count toward their app. */
+export function matchesTerm(bundleId: string, term: string): boolean {
+	const t = term.toLowerCase();
+	return bundleId.toLowerCase().includes(t) || appName(bundleId).toLowerCase().includes(t);
+}
+
+/** Daily seconds per watchlist term (case-insensitive). */
 export function watchlistDaily(rows: UsageRow[], terms: string[]): StackedSeries {
 	const dates = axis(rows);
 	const index = new Map(dates.map((d, i) => [d, i]));
 	const series = terms.map((key) => ({ key, data: dates.map(() => 0) }));
 	for (const r of rows) {
-		const bundle = r.bundleId.toLowerCase();
 		for (const s of series) {
-			if (bundle.includes(s.key.toLowerCase())) s.data[index.get(r.date)!] += r.seconds;
+			if (matchesTerm(r.bundleId, s.key)) s.data[index.get(r.date)!] += r.seconds;
 		}
 	}
 	return { dates, series };

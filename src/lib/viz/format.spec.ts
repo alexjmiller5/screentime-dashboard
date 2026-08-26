@@ -11,6 +11,14 @@ describe('appName', () => {
 		expect(appName('com.somevendor.CoolThing')).toBe('CoolThing');
 		expect(appName('Other')).toBe('Other');
 	});
+
+	it('names Chrome PWAs by their app (ids are URL-derived and global)', () => {
+		expect(appName('com.google.Chrome.app.agimnkijcaahngcdmfeangaknmldooml')).toBe('YouTube (PWA)');
+		expect(appName('com.google.Chrome.app.akpamiohjfcnimfljfndmaldlcfphjmp')).toBe(
+			'Instagram (PWA)'
+		);
+		expect(appName('com.google.Chrome.app.zzzzunknownzzzz')).toBe('Chrome App');
+	});
 });
 
 describe('termLabel', () => {
