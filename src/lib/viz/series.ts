@@ -1,12 +1,12 @@
 // Pure selectors: UsageCache rows -> chart-ready series.
-// Sources are alternative lenses over the same usage and are NEVER summed
-// together (knowledgeC and Biome overlap for the Mac) - source is a filter.
+// The sources are parallel measurements of the SAME minutes and are never
+// summed together - electUsage picks the best one per (device label, day).
 
 import type { UsageRow } from '../data/cache';
 import { appName } from './format';
 
 export interface RowFilter {
-	source: UsageRow['source'];
+	source?: UsageRow['source'];
 	startDate?: string;
 	endDate?: string;
 	devices?: string[];
@@ -15,7 +15,7 @@ export interface RowFilter {
 export function filterRows(rows: UsageRow[], filter: RowFilter): UsageRow[] {
 	return rows.filter(
 		(r) =>
-			r.source === filter.source &&
+			(!filter.source || r.source === filter.source) &&
 			(!filter.startDate || r.date >= filter.startDate) &&
 			(!filter.endDate || r.date <= filter.endDate) &&
 			(!filter.devices || filter.devices.includes(r.device))
@@ -85,6 +85,41 @@ export function rollingMean(values: number[], window: number): number[] {
 		out.push(sum / Math.min(i + 1, window));
 	}
 	return out;
+}
+
+const SOURCE_RANK: Record<UsageRow['source'], number> = {
+	screentime: 0, // Apple's official aggregates - matches the Settings pane
+	infocus: 1, // our focus-session derivation - fills Screen Time's gaps
+	knowledgec: 2 // legacy Mac store - last resort
+};
+
+/**
+ * Collapse the parallel measurement pipelines into one series: per (device
+ * LABEL, date) keep only the best-ranked source that has data. Labels are the
+ * cross-pipeline device identity (the same iPhone has different uuids in
+ * Biome and DeviceActivity - naming both "iPhone" merges them). Website rows
+ * (web:*) only exist in Screen Time and are returned separately so they never
+ * compete with - or double-count against - app rows.
+ */
+export function electUsage(
+	rows: UsageRow[],
+	labelOf: (device: string) => string
+): { apps: UsageRow[]; webs: UsageRow[] } {
+	const webs = rows.filter((r) => r.bundleId.startsWith('web:'));
+	const appRows = rows.filter((r) => !r.bundleId.startsWith('web:'));
+
+	const best = new Map<string, number>();
+	for (const r of appRows) {
+		const key = `${labelOf(r.device)}|${r.date}`;
+		const rank = SOURCE_RANK[r.source];
+		if (rank < (best.get(key) ?? Infinity)) best.set(key, rank);
+	}
+	return {
+		apps: appRows.filter(
+			(r) => SOURCE_RANK[r.source] === best.get(`${labelOf(r.device)}|${r.date}`)
+		),
+		webs
+	};
 }
 
 /** True when a bundle counts toward a watchlist term: matches the bundle id

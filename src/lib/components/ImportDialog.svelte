@@ -58,7 +58,7 @@
 			deviceIds.map((id) => {
 				const prior = initialLabels[id];
 				if (prior && !isPlaceholder(prior, id)) return [id, prior];
-				if (id === 'knowledgec') return [id, 'Mac (knowledgeC)'];
+				if (id === 'knowledgec') return [id, 'MacBook']; // same physical Mac -> same name
 				const guess = guessDeviceLabel(guessEvents(id));
 				if (guess === null) return [id, id.slice(0, 8)];
 				const label = guessed.has(guess) ? `${guess} (${id.slice(0, 8)})` : guess;
@@ -74,8 +74,10 @@
 		<Dialog.Header>
 			<Dialog.Title>Name your devices</Dialog.Title>
 			<Dialog.Description>
-				Scanned {scan.snapshots.length} snapshots. Give each discovered device a label - it's how they'll
-				appear in the charts.
+				Scanned {scan.snapshots.length} snapshots. Name each entry after its physical device. Entries
+				sharing a name are merged (the best data source wins per day) - the same device appears more than
+				once because Apple uses different ids per subsystem, so name both "iPhone", and name the knowledgeC
+				entry after your Mac (e.g. "MacBook").
 			</Dialog.Description>
 		</Dialog.Header>
 

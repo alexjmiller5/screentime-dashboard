@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { filterRows, dailyByApp, topApps, dateRange, rollingMean, watchlistDaily } from './series';
+import {
+	filterRows,
+	dailyByApp,
+	topApps,
+	dateRange,
+	rollingMean,
+	watchlistDaily,
+	electUsage
+} from './series';
 import type { UsageRow } from '../data/cache';
 
 const row = (
@@ -95,5 +103,37 @@ describe('watchlistDaily', () => {
 			['youtube']
 		);
 		expect(result.series).toEqual([{ key: 'youtube', data: [300] }]);
+	});
+});
+
+describe('electUsage', () => {
+	const labelOf = (d: string): string => (d === 'biome-1' || d === 'da-1' ? 'iPhone' : d);
+
+	it('prefers Screen Time aggregates per (device label, date), falls back to focus events', () => {
+		const rows = [
+			row('2026-01-05', 'com.a', 100, 'biome-1', 'infocus'),
+			row('2026-01-05', 'com.a', 120, 'da-1', 'screentime'), // same phone, same day
+			row('2026-01-06', 'com.a', 50, 'biome-1', 'infocus') // Screen Time gap day
+		];
+		const { apps } = electUsage(rows, labelOf);
+		expect(apps).toEqual([
+			row('2026-01-05', 'com.a', 120, 'da-1', 'screentime'),
+			row('2026-01-06', 'com.a', 50, 'biome-1', 'infocus')
+		]);
+	});
+
+	it('falls back to knowledgec when it is the only measurement', () => {
+		const rows = [row('2026-01-05', 'com.mac', 400, 'knowledgec', 'knowledgec')];
+		expect(electUsage(rows, (d) => d).apps).toEqual(rows);
+	});
+
+	it('separates website rows - they never compete with app rows', () => {
+		const rows = [
+			row('2026-01-05', 'web:youtube.com', 60, 'da-1', 'screentime'),
+			row('2026-01-05', 'com.a', 100, 'biome-1', 'infocus')
+		];
+		const result = electUsage(rows, labelOf);
+		expect(result.webs).toEqual([row('2026-01-05', 'web:youtube.com', 60, 'da-1', 'screentime')]);
+		expect(result.apps).toEqual([row('2026-01-05', 'com.a', 100, 'biome-1', 'infocus')]);
 	});
 });
