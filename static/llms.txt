@@ -1,0 +1,9 @@
+# Screen Time Dashboard
+
+> Personal dashboard visualizing Apple Screen Time history across devices -
+> app usage over time, per-device and per-app breakdowns, imported in the
+> browser from local screentime-backup snapshots and cached in R2.
+
+## Pages
+
+- [Home](/): the dashboard - usage-over-time charts, device/app filters, import button

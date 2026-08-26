@@ -1,0 +1,3 @@
+# allow crawling everything by default (Cloudflare Access gates the site anyway)
+User-agent: *
+Disallow:
