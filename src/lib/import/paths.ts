@@ -28,18 +28,19 @@ export function classifyDeviceActivityFile(path: string): DeviceActivityFile | n
  * SpringBoard = iOS, Finder/loginwindow = macOS.
  */
 export function guessDeviceLabel(events: FocusEvent[]): 'iPhone' | 'Mac' | null {
+	let weakIos = false;
 	for (const e of events) {
 		const b = e.bundleId.toLowerCase();
-		if (
-			b.startsWith('com.apple.springboard') ||
-			b.startsWith('com.apple.mobile') ||
-			b.endsWith('.ios')
-		) {
-			return 'iPhone';
-		}
+		// Definitive markers first, over the whole event set: SpringBoard exists
+		// only on iOS, Finder/loginwindow only on macOS. Weak hints alone (.ios
+		// builds, com.apple.mobile* bundles) also appear on Macs - Messages on
+		// the Mac is literally com.apple.MobileSMS - so they only count when no
+		// definitive marker is present.
+		if (b.startsWith('com.apple.springboard')) return 'iPhone';
 		if (b === 'com.apple.finder' || b === 'com.apple.loginwindow') return 'Mac';
+		if (b.startsWith('com.apple.mobile') || b.endsWith('.ios')) weakIos = true;
 	}
-	return null;
+	return weakIos ? 'iPhone' : null;
 }
 
 /** Snapshot dirs are date-named: 2026-08-23, 2026-07-05-0008, *-macbook-seed… */

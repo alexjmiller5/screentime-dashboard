@@ -34,10 +34,13 @@
 		].filter((id) => eventCount(id) > 0)
 	);
 
-	// A stored label that is just the uuid prefix was never a real name (the
-	// old dialog's default) - don't let it shadow a platform guess.
+	// Machine-generated labels (uuid prefixes, suffixed guesses, the old
+	// knowledgeC default) were never the user's words - don't let them shadow
+	// a fresh platform guess. Plain "iPhone"/"Mac"/anything typed stays.
 	const isPlaceholder = (label: string, id: string): boolean =>
-		label.toUpperCase() === id.slice(0, 8).toUpperCase();
+		label.toUpperCase() === id.slice(0, 8).toUpperCase() ||
+		/^(iPhone|Mac) \([0-9A-F]{8}\)$/i.test(label) ||
+		label === 'Mac (knowledgeC)';
 
 	// For Screen Time devices there are no focus events - guess from the
 	// bundle ids in their activity entries instead.
@@ -49,21 +52,22 @@
 				.map((e) => ({ tsMs: 0, bundleId: e.key, focus: true }))
 		);
 
-	// Prefill: real prior label > platform guess (suffixed with the short uuid
-	// when two devices guess alike) > short uuid.
+	// Prefill: real prior label > platform guess > short uuid. Entries sharing
+	// a name merge, so same-guess entries share the prefill deliberately -
+	// "iPhone" twice IS one iPhone. Only "Mac" gets uuid suffixes past the
+	// first, because several physical Macs are likely (rename to merge/split).
 	let labels: Record<string, string> = $state({});
 	$effect(() => {
-		const guessed = new Set<string>();
+		let macs = 0;
 		labels = Object.fromEntries(
 			deviceIds.map((id) => {
 				const prior = initialLabels[id];
 				if (prior && !isPlaceholder(prior, id)) return [id, prior];
-				if (id === 'knowledgec') return [id, 'MacBook']; // same physical Mac -> same name
+				if (id === 'knowledgec') return [id, 'Mac']; // same physical Mac -> same name
 				const guess = guessDeviceLabel(guessEvents(id));
 				if (guess === null) return [id, id.slice(0, 8)];
-				const label = guessed.has(guess) ? `${guess} (${id.slice(0, 8)})` : guess;
-				guessed.add(guess);
-				return [id, label];
+				if (guess === 'Mac' && ++macs > 1) return [id, `Mac (${id.slice(0, 8)})`];
+				return [id, guess];
 			})
 		);
 	});
