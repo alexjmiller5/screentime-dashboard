@@ -10,7 +10,7 @@
 	import TopAppsList from '$lib/components/TopAppsList.svelte';
 	import DataTable from '$lib/components/DataTable.svelte';
 	import ImportDialog from '$lib/components/ImportDialog.svelte';
-	import type { UsageCache, UsageRow } from '$lib/data/cache';
+	import type { UsageCache } from '$lib/data/cache';
 	import type { ImportResult } from '$lib/import/importer';
 	import {
 		filterRows,
@@ -18,6 +18,7 @@
 		topApps,
 		watchlistDaily,
 		matchesTerm,
+		electUsage,
 		rollingMean,
 		dateRange
 	} from '$lib/viz/series';
@@ -33,10 +34,9 @@
 	let scan = $state<ImportResult | null>(null);
 
 	let rangeDays = $state('90');
-	let source = $state<UsageRow['source']>('infocus');
-	// Screen Time rows carry apps AND web domains as parallel breakdowns of the
-	// same minutes - never summed together, so the view picks one.
-	let stView = $state<'apps' | 'websites'>('apps');
+	// Apps and websites are parallel breakdowns of the same minutes - never
+	// summed together, so the view picks one.
+	let view = $state<'apps' | 'websites'>('apps');
 	let excludedDevices: string[] = $state([]);
 	let watchlistText = $state('youtube, instagram');
 	let showTable = $state(false);
@@ -56,17 +56,17 @@
 	);
 	$effect(() => localStorage.setItem(WATCHLIST_KEY, watchlistText));
 
-	const allSourceRows = $derived(
-		cache ? filterRows(cache.rows, { source, devices: undefined }) : []
+	const deviceLabel = (id: string): string => cache?.devices[id] ?? id.slice(0, 8);
+
+	// Collapse the measurement pipelines: per (device label, day) the best
+	// available source wins, so nothing is ever double-counted.
+	const elected = $derived(cache ? electUsage(cache.rows, deviceLabel) : { apps: [], webs: [] });
+	const sourceRows = $derived(view === 'apps' ? elected.apps : elected.webs);
+	const deviceLabels = $derived(
+		[...new Set([...elected.apps, ...elected.webs].map((r) => deviceLabel(r.device)))].sort()
 	);
-	const sourceRows = $derived(
-		source === 'screentime'
-			? allSourceRows.filter((r) => r.bundleId.startsWith('web:') === (stView === 'websites'))
-			: allSourceRows
-	);
-	const deviceIds = $derived([...new Set(sourceRows.map((r) => r.device))].sort());
 	const lastDate = $derived(
-		sourceRows.length > 0 ? sourceRows.reduce((m, r) => (r.date > m ? r.date : m), '') : ''
+		elected.apps.length > 0 ? elected.apps.reduce((m, r) => (r.date > m ? r.date : m), '') : ''
 	);
 	const startDate = $derived(
 		rangeDays === 'all' || lastDate === ''
@@ -76,12 +76,9 @@
 					.slice(0, 10)
 	);
 	const rows = $derived(
-		filterRows(sourceRows, {
-			source,
-			startDate,
-			endDate: lastDate || undefined,
-			devices: deviceIds.filter((d) => !excludedDevices.includes(d))
-		})
+		filterRows(sourceRows, { startDate, endDate: lastDate || undefined }).filter(
+			(r) => !excludedDevices.includes(deviceLabel(r.device))
+		)
 	);
 
 	// 8 named series = every validated palette slot; the rest folds to Other in
@@ -89,10 +86,11 @@
 	const stacked = $derived(dailyByApp(rows, 8));
 	const ranked = $derived(topApps(rows, Infinity));
 
-	// Watchlist trend over the full source history (the point is the long arc),
-	// smoothed with a 7-day rolling mean.
+	// Watchlist trend over the full history (the point is the long arc) across
+	// apps AND websites, smoothed with a 7-day rolling mean.
+	const watchRows = $derived([...elected.apps, ...elected.webs]);
 	const watchTrend = $derived.by(() => {
-		const daily = watchlistDaily(allSourceRows, watchlist);
+		const daily = watchlistDaily(watchRows, watchlist);
 		return {
 			dates: daily.dates,
 			series: daily.series.map((s) => ({
@@ -114,21 +112,16 @@
 					new Date(end - offset * day).toISOString().slice(0, 10)
 				)
 			);
-		const sum = (dates: Set<string>, match?: (b: string) => boolean): number =>
-			sourceRows.reduce(
+		const sum = (rowSet: typeof rows, dates: Set<string>, match?: (b: string) => boolean): number =>
+			rowSet.reduce(
 				(acc, r) => (dates.has(r.date) && (!match || match(r.bundleId)) ? acc + r.seconds : acc),
 				0
 			);
 		const inWatchlist = (b: string): boolean => watchlist.some((t) => matchesTerm(b, t));
-		const thisWeek = sum(week(0));
-		const priorWeek = sum(week(7));
-		const sumAll = (dates: Set<string>, match: (b: string) => boolean): number =>
-			allSourceRows.reduce(
-				(acc, r) => (dates.has(r.date) && match(r.bundleId) ? acc + r.seconds : acc),
-				0
-			);
-		const watchWeek = sumAll(week(0), inWatchlist);
-		const watchPrior = sumAll(week(7), inWatchlist);
+		const thisWeek = sum(elected.apps, week(0));
+		const priorWeek = sum(elected.apps, week(7));
+		const watchWeek = sum(watchRows, week(0), inWatchlist);
+		const watchPrior = sum(watchRows, week(7), inWatchlist);
 		return { thisWeek, priorWeek, watchWeek, watchPrior };
 	});
 
@@ -166,8 +159,6 @@
 			importError = error instanceof Error ? error.message : String(error);
 		}
 	}
-
-	const deviceLabel = (id: string): string => cache?.devices[id] ?? id.slice(0, 8);
 </script>
 
 <Seo
@@ -220,47 +211,30 @@
 				</Select.Content>
 			</Select.Root>
 
-			<Select.Root type="single" bind:value={source}>
-				<Select.Trigger>
-					{source === 'infocus'
-						? 'Focus events (all devices)'
-						: source === 'screentime'
-							? 'Screen Time (apps + websites)'
-							: 'knowledgeC (Mac)'}
-				</Select.Trigger>
+			<Select.Root type="single" bind:value={view}>
+				<Select.Trigger>{view === 'apps' ? 'Apps' : 'Websites'}</Select.Trigger>
 				<Select.Content>
-					<Select.Item value="infocus">Focus events (all devices)</Select.Item>
-					<Select.Item value="screentime">Screen Time (apps + websites)</Select.Item>
-					<Select.Item value="knowledgec">knowledgeC (Mac)</Select.Item>
+					<Select.Item value="apps">Apps</Select.Item>
+					<Select.Item value="websites">Websites</Select.Item>
 				</Select.Content>
 			</Select.Root>
 
-			{#if source === 'screentime'}
-				<Select.Root type="single" bind:value={stView}>
-					<Select.Trigger>{stView === 'apps' ? 'Apps' : 'Websites'}</Select.Trigger>
-					<Select.Content>
-						<Select.Item value="apps">Apps</Select.Item>
-						<Select.Item value="websites">Websites</Select.Item>
-					</Select.Content>
-				</Select.Root>
-			{/if}
-
-			{#each deviceIds as id (id)}
+			{#each deviceLabels as label (label)}
 				<Button
 					variant="outline"
 					size="sm"
-					class={excludedDevices.includes(id) ? 'opacity-45' : ''}
+					class={excludedDevices.includes(label) ? 'opacity-45' : ''}
 					onclick={() =>
-						(excludedDevices = excludedDevices.includes(id)
-							? excludedDevices.filter((d) => d !== id)
-							: [...excludedDevices, id])}
+						(excludedDevices = excludedDevices.includes(label)
+							? excludedDevices.filter((d) => d !== label)
+							: [...excludedDevices, label])}
 				>
 					<span
-						class="size-2 rounded-full {excludedDevices.includes(id)
+						class="size-2 rounded-full {excludedDevices.includes(label)
 							? 'bg-muted-foreground'
 							: 'bg-chart-1'}"
 					></span>
-					{deviceLabel(id)}
+					{label}
 				</Button>
 			{/each}
 
