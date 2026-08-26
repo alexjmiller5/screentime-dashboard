@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { appName, formatDuration } from '$lib/viz/format';
+	import { formatDuration } from '$lib/viz/format';
 
 	interface Props {
 		apps: { bundleId: string; seconds: number }[];
@@ -9,11 +9,12 @@
 </script>
 
 <!-- Nominal magnitude comparison: every bar wears slot-1 (identity is the row
-     label, length is the data) with the value labeled at the tip. -->
+     label, length is the data) with the value labeled at the tip. Keys arrive
+     already display-named (grouped by app identity in topApps). -->
 <ol class="flex max-h-96 flex-col gap-2 overflow-y-auto pr-1">
 	{#each apps as app (app.bundleId)}
 		<li class="grid grid-cols-[8rem_1fr_4.5rem] items-center gap-3 text-sm">
-			<span class="truncate text-foreground" title={app.bundleId}>{appName(app.bundleId)}</span>
+			<span class="truncate text-foreground" title={app.bundleId}>{app.bundleId}</span>
 			<span class="h-4 overflow-hidden rounded-sm bg-secondary">
 				<span
 					class="block h-full rounded-sm bg-chart-1"

@@ -6,7 +6,11 @@ describe('appName', () => {
 		expect(appName('com.google.ios.youtube')).toBe('YouTube');
 		expect(appName('com.burbn.instagram')).toBe('Instagram');
 		expect(appName('com.apple.MobileSMS')).toBe('Messages');
-		expect(appName('com.google.chrome.ios')).toBe('Chrome (iOS)');
+		expect(appName('com.google.chrome.ios')).toBe('Chrome'); // Apple canonicalizes desktop Chrome to the iOS id
+		expect(appName('com.apple.mobilemail')).toBe('Mail');
+		expect(appName('com.apple.mobilenotes')).toBe('Notes');
+		expect(appName('com.apple.mobileslideshow')).toBe('Photos');
+		expect(appName('com.apple.mobiletimer')).toBe('Clock');
 		expect(appName('com.google.Chrome')).toBe('Chrome');
 		expect(appName('com.somevendor.CoolThing')).toBe('CoolThing');
 		expect(appName('Other')).toBe('Other');

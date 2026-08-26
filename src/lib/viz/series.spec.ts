@@ -9,6 +9,7 @@ import {
 	electUsage
 } from './series';
 import type { UsageRow } from '../data/cache';
+import { appName } from './format';
 
 const row = (
 	date: string,
@@ -62,6 +63,18 @@ describe('dailyByApp', () => {
 
 	it('returns empty for no rows', () => {
 		expect(dailyByApp([], 5)).toEqual({ dates: [], series: [] });
+	});
+
+	it('merges bundles sharing an app identity when keyed by display name', () => {
+		const { series } = dailyByApp(
+			[
+				row('2026-01-01', 'com.google.Chrome', 100), // Biome desktop id
+				row('2026-01-01', 'com.google.chrome.ios', 50) // Screen Time unified id
+			],
+			5,
+			appName
+		);
+		expect(series).toEqual([{ key: 'Chrome', data: [150] }]);
 	});
 });
 
