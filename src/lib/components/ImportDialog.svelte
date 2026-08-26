@@ -4,6 +4,7 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import type { ImportResult } from '$lib/import/importer';
+	import { guessDeviceLabel } from '$lib/import/paths';
 
 	interface Props {
 		open: boolean;
@@ -16,22 +17,34 @@
 	}
 	const { open, scan, initialLabels, uploading, onConfirm, onCancel }: Props = $props();
 
-	const deviceIds = $derived([
-		...Object.keys(scan.focusEventsByDevice),
-		...Object.keys(scan.knowledgecSessionsByDevice)
-	]);
-	let labels: Record<string, string> = $state({});
-	$effect(() => {
-		labels = Object.fromEntries(
-			deviceIds.map((id) => [
-				id,
-				initialLabels[id] ?? (id === 'knowledgec' ? 'Mac (knowledgeC)' : id.slice(0, 8))
-			])
-		);
-	});
-
 	const eventCount = (id: string): number =>
 		scan.focusEventsByDevice[id]?.length ?? scan.knowledgecSessionsByDevice[id]?.length ?? 0;
+
+	// Devices with no events carry no data - don't ask about them.
+	const deviceIds = $derived(
+		[
+			...Object.keys(scan.focusEventsByDevice),
+			...Object.keys(scan.knowledgecSessionsByDevice)
+		].filter((id) => eventCount(id) > 0)
+	);
+
+	// Prefill: prior label > platform guess from the events (suffixed with the
+	// short uuid when two devices guess alike) > short uuid.
+	let labels: Record<string, string> = $state({});
+	$effect(() => {
+		const guessed = new Set<string>();
+		labels = Object.fromEntries(
+			deviceIds.map((id) => {
+				if (initialLabels[id]) return [id, initialLabels[id]];
+				if (id === 'knowledgec') return [id, 'Mac (knowledgeC)'];
+				const guess = guessDeviceLabel(scan.focusEventsByDevice[id] ?? []);
+				if (guess === null) return [id, id.slice(0, 8)];
+				const label = guessed.has(guess) ? `${guess} (${id.slice(0, 8)})` : guess;
+				guessed.add(guess);
+				return [id, label];
+			})
+		);
+	});
 </script>
 
 <Dialog.Root {open} onOpenChange={(o) => !o && onCancel()}>
