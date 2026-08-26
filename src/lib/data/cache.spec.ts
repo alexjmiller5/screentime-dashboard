@@ -75,4 +75,31 @@ describe('buildUsageCache', () => {
 			}
 		]);
 	});
+
+	it('drops system shell surfaces - lock screen and springboard are not usage', () => {
+		// loginwindow keeps "focus" for entire lock periods (419h of fake usage
+		// in the real archive) - shell bundles must never become rows.
+		const shellBundles = [
+			'com.apple.loginwindow',
+			'com.apple.SpringBoard.transitionReason.homescreen',
+			'com.apple.springboard.today-view',
+			'com.apple.control-center',
+			'com.apple.notificationcenterui'
+		];
+		const cache = buildUsageCache({
+			timeZone: TZ,
+			importedAt: '2026-08-25T00:00:00Z',
+			devices: {},
+			focusEventsByDevice: {
+				phone: shellBundles.flatMap((b) => [
+					ev('2026-01-05T15:00:00Z', b, true),
+					ev('2026-01-05T15:30:00Z', b, false)
+				])
+			},
+			knowledgecSessionsByDevice: {
+				mac: [session('2026-01-05T16:00:00Z', '2026-01-05T18:00:00Z', 'com.apple.loginwindow')]
+			}
+		});
+		expect(cache.rows).toEqual([]);
+	});
 });

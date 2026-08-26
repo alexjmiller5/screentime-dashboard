@@ -21,6 +21,12 @@ export interface UsageCache {
 	rows: UsageRow[];
 }
 
+/** System shell surfaces whose "focus" is not usage: the lock screen holds
+ * focus for entire lock periods, springboard/control-center are in-between
+ * states. They never become rows. */
+const SHELL_BUNDLE_RE =
+	/^com\.apple\.(loginwindow|springboard|control-center|coversheet|notificationcenter|usernotificationcenter)/i;
+
 export interface BuildInput {
 	timeZone: string;
 	importedAt: string;
@@ -53,7 +59,8 @@ export function buildUsageCache(input: BuildInput): UsageCache {
 		}
 	}
 
-	rows.sort(
+	const usageRows = rows.filter((r) => !SHELL_BUNDLE_RE.test(r.bundleId));
+	usageRows.sort(
 		(a, b) =>
 			a.date.localeCompare(b.date) ||
 			a.device.localeCompare(b.device) ||
@@ -66,6 +73,6 @@ export function buildUsageCache(input: BuildInput): UsageCache {
 		importedAt: input.importedAt,
 		timeZone: input.timeZone,
 		devices: input.devices,
-		rows
+		rows: usageRows
 	};
 }
