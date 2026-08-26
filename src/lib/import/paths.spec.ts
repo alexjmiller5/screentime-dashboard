@@ -1,5 +1,30 @@
 import { describe, expect, it } from 'vitest';
-import { isSnapshotDirName, classifyStreamFile } from './paths';
+import { isSnapshotDirName, classifyStreamFile, guessDeviceLabel } from './paths';
+import type { FocusEvent } from '../data/infocus';
+
+const ev = (bundleId: string): FocusEvent => ({ tsMs: 0, bundleId, focus: true });
+
+describe('guessDeviceLabel', () => {
+	it('recognizes an iPhone by SpringBoard surfaces', () => {
+		expect(
+			guessDeviceLabel([
+				ev('com.spotify.client'),
+				ev('com.apple.SpringBoard.transitionReason.homescreen')
+			])
+		).toBe('iPhone');
+		expect(guessDeviceLabel([ev('com.apple.springboard.today-view')])).toBe('iPhone');
+	});
+
+	it('recognizes a Mac by Finder/loginwindow', () => {
+		expect(guessDeviceLabel([ev('com.apple.finder'), ev('com.google.Chrome')])).toBe('Mac');
+		expect(guessDeviceLabel([ev('com.apple.loginwindow')])).toBe('Mac');
+	});
+
+	it('returns null when nothing platform-distinctive is present', () => {
+		expect(guessDeviceLabel([ev('com.spotify.client')])).toBeNull();
+		expect(guessDeviceLabel([])).toBeNull();
+	});
+});
 
 describe('isSnapshotDirName', () => {
 	it('accepts date-named snapshot dirs, with or without suffixes', () => {
