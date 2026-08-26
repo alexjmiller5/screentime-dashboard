@@ -1,0 +1,44 @@
+[
+	{
+		"timestamp": "2026-01-05T09:00:00.250000+00:00",
+		"state": 1,
+		"crcPassed": true,
+		"dataBase64": "EAEYASEAACCI2oXHQTISY29tLmV4YW1wbGUuYXBwb25lSgQyNi4waAE="
+	},
+	{
+		"timestamp": "2026-01-05T09:00:30.750000+00:00",
+		"state": 1,
+		"crcPassed": true,
+		"dataBase64": "EAEYACEAAGCX2oXHQTISY29tLmV4YW1wbGUuYXBwb25lSgQyNi4waAE="
+	},
+	{
+		"timestamp": "2026-01-05T09:01:00+00:00",
+		"state": 1,
+		"crcPassed": true,
+		"dataBase64": "EAEYASEAAACm2oXHQTISY29tLmV4YW1wbGUuYXBwdHdvSgQyNi4wUgUxLjIuM2gB"
+	},
+	{
+		"timestamp": "2026-01-05T09:02:00+00:00",
+		"state": 1,
+		"crcPassed": true,
+		"dataBase64": "EAEYACEAAADE2oXHQTISY29tLmV4YW1wbGUuYXBwdHdvSgQyNi4waAE="
+	},
+	{
+		"timestamp": "2026-01-05T09:03:00+00:00",
+		"state": 3,
+		"crcPassed": true,
+		"dataBase64": "EAEYASEAAADi2oXHQTIcY29tLmV4YW1wbGUuc3ByaW5nYm9hcmQuaG9tZUoEMjYuMGgB"
+	},
+	{
+		"timestamp": "2026-01-05T09:05:00+00:00",
+		"state": 1,
+		"crcPassed": true,
+		"dataBase64": "EAEYASEAAAAe24XHQTISY29tLmV4YW1wbGUuYXBwb25lSgQyNi4waAE="
+	},
+	{
+		"timestamp": "2026-01-05T09:06:00+00:00",
+		"state": 3,
+		"crcPassed": true,
+		"dataBase64": "EAEYASEAAAAe24XHQTISY29tLmV4YW1wbGUuYXBwb25lSgQyNi4waAE="
+	}
+]

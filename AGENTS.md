@@ -40,12 +40,13 @@ through 2026-07-12). Key facts (verified 2026-08-25, spike in the Notion
 project note):
 
 - **Biome `App.InFocus/remote/<device-uuid>/` SEGB segments** are the primary
-  source: app-focus transition events (bundle id in the protobuf payload,
-  timestamp in the SEGB record envelope). Usage duration = interval between
-  consecutive events per device; SpringBoard/lock/loginwindow events mark
-  screen-off. Tombstoned segments are still readable and extend coverage -
-  parse `tombstone/` too. Device UUIDs: `1B05C365-…` = iPhone, `83CABE81-…` =
-  MacBook (label map in `src/lib/data/devices.ts`).
+  source: app-focus events. Payload field 3 is an explicit focus gained(1)/
+  lost(0) flag, field 4 the precise event timestamp (double of Cocoa seconds),
+  field 6 the bundle id - so durations are exact focus sessions, no gap
+  heuristics. `tombstone/` subdirs hold deletion-bookkeeping records (no
+  usage data; the extractor's field-type checks reject them) - skip them.
+  Device UUIDs are machine-specific and never hardcoded: labels are assigned
+  in the import UI and stored in the cache document.
 - **knowledgeC `/app/usage`** rows give absolute Mac durations 2026-05-06 →
   2026-07-11 (laptop-era snapshots only; mini-era knowledgeC is empty).
   Mac Absolute Time epoch offset: `+ 978307200`.
