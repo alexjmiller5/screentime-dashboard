@@ -18,13 +18,19 @@
 	const { open, scan, initialLabels, uploading, onConfirm, onCancel }: Props = $props();
 
 	const eventCount = (id: string): number =>
-		scan.focusEventsByDevice[id]?.length ?? scan.knowledgecSessionsByDevice[id]?.length ?? 0;
+		scan.focusEventsByDevice[id]?.length ??
+		scan.knowledgecSessionsByDevice[id]?.length ??
+		scan.deviceActivityByDevice[id]?.length ??
+		0;
 
 	// Devices with no events carry no data - don't ask about them.
 	const deviceIds = $derived(
 		[
-			...Object.keys(scan.focusEventsByDevice),
-			...Object.keys(scan.knowledgecSessionsByDevice)
+			...new Set([
+				...Object.keys(scan.focusEventsByDevice),
+				...Object.keys(scan.knowledgecSessionsByDevice),
+				...Object.keys(scan.deviceActivityByDevice)
+			])
 		].filter((id) => eventCount(id) > 0)
 	);
 

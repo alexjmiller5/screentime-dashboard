@@ -2,6 +2,25 @@
 
 import type { FocusEvent } from '../data/infocus';
 
+export interface DeviceActivityFile {
+	device: string;
+	/** Segment day start, Cocoa seconds (from the filename). */
+	cocoaSeconds: number;
+}
+
+/**
+ * Classify a path inside device-activity.tar.gz. Only Cloud per-device DAILY
+ * segments carry the cross-device Screen Time aggregates (apps + web
+ * domains); Hourly is redundant detail and Local/ is sparse metadata.
+ */
+export function classifyDeviceActivityFile(path: string): DeviceActivityFile | null {
+	const match =
+		/^com\.apple\.DeviceActivity\/Cloud\/[^/]+\/([0-9A-Fa-f-]{36})\/Daily\/ActivitySegments\/([0-9.]+)\.plist$/.exec(
+			path
+		);
+	return match ? { device: match[1], cocoaSeconds: Number(match[2]) } : null;
+}
+
 /**
  * Best-effort platform guess from a device's event content. Real device names
  * exist only in Screen Time's RMAdminStore under a different (unjoinable)

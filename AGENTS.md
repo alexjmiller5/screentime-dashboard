@@ -47,6 +47,16 @@ project note):
   usage data; the extractor's field-type checks reject them) - skip them.
   Device UUIDs are machine-specific and never hardcoded: labels are assigned
   in the import UI and stored in the cache document.
+- **DeviceActivity `Cloud/<user>/<device>/Daily/ActivitySegments/*.plist`**
+  (inside `device-activity.tar.gz`, capturable only on macOS ≤26.2 Macs -
+  currently the MacBook): Apple's own cross-device Screen Time aggregates as
+  binary plists - per-app durations AND per-web-domain durations (WebKit
+  reports every iOS browser, so this is where iPhone per-site time lives).
+  Parsed by `bplist.ts` + `deviceactivity.ts` into `source: 'screentime'`
+  rows; web domains get `web:<domain>` bundle ids. Apps and websites are
+  parallel breakdowns of the SAME minutes - the UI's Apps/Websites view
+  keeps them from ever being summed together. Hourly/ and Local/ files are
+  skipped; later snapshots overwrite earlier copies of the same day.
 - **knowledgeC `/app/usage`** rows give absolute Mac durations 2026-05-06 →
   2026-07-11 (laptop-era snapshots only; mini-era knowledgeC is empty).
   Mac Absolute Time epoch offset: `+ 978307200`.

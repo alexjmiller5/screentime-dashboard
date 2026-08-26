@@ -19,6 +19,10 @@ describe('appName', () => {
 		);
 		expect(appName('com.google.Chrome.app.zzzzunknownzzzz')).toBe('Chrome App');
 	});
+
+	it('renders web-domain keys as the bare domain', () => {
+		expect(appName('web:movies.example.test')).toBe('movies.example.test');
+	});
 });
 
 describe('termLabel', () => {

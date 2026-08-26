@@ -52,6 +52,7 @@ const PWA: Record<string, string> = {
 const PWA_PREFIX = 'com.google.chrome.app.';
 
 export function appName(bundleId: string): string {
+	if (bundleId.startsWith('web:')) return bundleId.slice(4); // website usage rows
 	const lower = bundleId.toLowerCase();
 	if (lower.startsWith(PWA_PREFIX)) {
 		return PWA[lower.slice(PWA_PREFIX.length)] ?? 'Chrome App';

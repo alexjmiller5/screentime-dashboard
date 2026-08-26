@@ -33,7 +33,10 @@
 	let scan = $state<ImportResult | null>(null);
 
 	let rangeDays = $state('90');
-	let source: UsageRow['source'] = $state('infocus');
+	let source = $state<UsageRow['source']>('infocus');
+	// Screen Time rows carry apps AND web domains as parallel breakdowns of the
+	// same minutes - never summed together, so the view picks one.
+	let stView = $state<'apps' | 'websites'>('apps');
 	let excludedDevices: string[] = $state([]);
 	let watchlistText = $state('youtube, instagram');
 	let showTable = $state(false);
@@ -53,7 +56,14 @@
 	);
 	$effect(() => localStorage.setItem(WATCHLIST_KEY, watchlistText));
 
-	const sourceRows = $derived(cache ? filterRows(cache.rows, { source, devices: undefined }) : []);
+	const allSourceRows = $derived(
+		cache ? filterRows(cache.rows, { source, devices: undefined }) : []
+	);
+	const sourceRows = $derived(
+		source === 'screentime'
+			? allSourceRows.filter((r) => r.bundleId.startsWith('web:') === (stView === 'websites'))
+			: allSourceRows
+	);
 	const deviceIds = $derived([...new Set(sourceRows.map((r) => r.device))].sort());
 	const lastDate = $derived(
 		sourceRows.length > 0 ? sourceRows.reduce((m, r) => (r.date > m ? r.date : m), '') : ''
@@ -74,13 +84,15 @@
 		})
 	);
 
-	const stacked = $derived(dailyByApp(rows, 6));
-	const ranked = $derived(topApps(rows, 10));
+	// 8 named series = every validated palette slot; the rest folds to Other in
+	// the chart, but the ranked list below shows everything.
+	const stacked = $derived(dailyByApp(rows, 8));
+	const ranked = $derived(topApps(rows, Infinity));
 
 	// Watchlist trend over the full source history (the point is the long arc),
 	// smoothed with a 7-day rolling mean.
 	const watchTrend = $derived.by(() => {
-		const daily = watchlistDaily(sourceRows, watchlist);
+		const daily = watchlistDaily(allSourceRows, watchlist);
 		return {
 			dates: daily.dates,
 			series: daily.series.map((s) => ({
@@ -110,8 +122,13 @@
 		const inWatchlist = (b: string): boolean => watchlist.some((t) => matchesTerm(b, t));
 		const thisWeek = sum(week(0));
 		const priorWeek = sum(week(7));
-		const watchWeek = sum(week(0), inWatchlist);
-		const watchPrior = sum(week(7), inWatchlist);
+		const sumAll = (dates: Set<string>, match: (b: string) => boolean): number =>
+			allSourceRows.reduce(
+				(acc, r) => (dates.has(r.date) && match(r.bundleId) ? acc + r.seconds : acc),
+				0
+			);
+		const watchWeek = sumAll(week(0), inWatchlist);
+		const watchPrior = sumAll(week(7), inWatchlist);
 		return { thisWeek, priorWeek, watchWeek, watchPrior };
 	});
 
@@ -205,13 +222,28 @@
 
 			<Select.Root type="single" bind:value={source}>
 				<Select.Trigger>
-					{source === 'infocus' ? 'Focus events (all devices)' : 'knowledgeC (Mac)'}
+					{source === 'infocus'
+						? 'Focus events (all devices)'
+						: source === 'screentime'
+							? 'Screen Time (apps + websites)'
+							: 'knowledgeC (Mac)'}
 				</Select.Trigger>
 				<Select.Content>
 					<Select.Item value="infocus">Focus events (all devices)</Select.Item>
+					<Select.Item value="screentime">Screen Time (apps + websites)</Select.Item>
 					<Select.Item value="knowledgec">knowledgeC (Mac)</Select.Item>
 				</Select.Content>
 			</Select.Root>
+
+			{#if source === 'screentime'}
+				<Select.Root type="single" bind:value={stView}>
+					<Select.Trigger>{stView === 'apps' ? 'Apps' : 'Websites'}</Select.Trigger>
+					<Select.Content>
+						<Select.Item value="apps">Apps</Select.Item>
+						<Select.Item value="websites">Websites</Select.Item>
+					</Select.Content>
+				</Select.Root>
+			{/if}
 
 			{#each deviceIds as id (id)}
 				<Button

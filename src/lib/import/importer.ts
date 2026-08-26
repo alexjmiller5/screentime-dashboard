@@ -8,8 +8,14 @@ import { extractFocusEvents, type FocusEvent } from '../data/infocus';
 import { extractAppUsageSessions } from '../data/knowledgec';
 import type { UsageSession } from '../data/intervals';
 import { untar } from '../data/tar';
+import { parseBplist } from '../data/bplist';
+import {
+	extractSegmentActivities,
+	type ActivityEntry,
+	type DeviceSegment
+} from '../data/deviceactivity';
 import { gunzip } from './gunzip';
-import { isSnapshotDirName, classifyStreamFile } from './paths';
+import { isSnapshotDirName, classifyStreamFile, classifyDeviceActivityFile } from './paths';
 
 /** knowledgeC has no device field - it belongs to whichever Mac wrote the
  * snapshot. Attributed to this pseudo-device; labeled in the UI like any other. */
@@ -31,6 +37,9 @@ export interface ImportResult {
 	errors: string[];
 	focusEventsByDevice: Record<string, FocusEvent[]>;
 	knowledgecSessionsByDevice: Record<string, UsageSession[]>;
+	/** One segment per (device, day); later snapshots overwrite earlier
+	 * (their copy of a still-open day is more complete). */
+	deviceActivityByDevice: Record<string, DeviceSegment[]>;
 }
 
 export interface ImportOptions {
@@ -47,9 +56,13 @@ export async function importBackups(dir: DirLike, options: ImportOptions): Promi
 		snapshots: [],
 		errors: [],
 		focusEventsByDevice: {},
-		knowledgecSessionsByDevice: {}
+		knowledgecSessionsByDevice: {},
+		deviceActivityByDevice: {}
 	};
 	let SQL: SqlJsStatic | null = null;
+	// (device, day) -> entries; snapshots walk in chronological order, so a
+	// later snapshot's copy of the same day overwrites the earlier partial one.
+	const segmentEntries = new Map<string, ActivityEntry[]>();
 
 	const snapshotDirs: DirLike[] = [];
 	for await (const entry of dir.values()) {
@@ -77,11 +90,28 @@ export async function importBackups(dir: DirLike, options: ImportOptions): Promi
 					SQL ??= await options.initSql();
 					const sessions = extractAppUsageSessions(SQL, await gunzip(await readEntry(entry)));
 					(result.knowledgecSessionsByDevice[KNOWLEDGEC_DEVICE] ??= []).push(...sessions);
+				} else if (entry.name === 'device-activity.tar.gz') {
+					for (const file of untar(await gunzip(await readEntry(entry)))) {
+						const classified = classifyDeviceActivityFile(file.name);
+						if (!classified) continue;
+						const entries = extractSegmentActivities(parseBplist(file.data));
+						if (entries.length > 0) {
+							segmentEntries.set(`${classified.device}|${classified.cocoaSeconds}`, entries);
+						}
+					}
 				}
 			}
 		} catch (error) {
 			result.errors.push(`${name}: ${error instanceof Error ? error.message : String(error)}`);
 		}
+	}
+
+	for (const [key, entries] of segmentEntries) {
+		const [device, cocoa] = key.split('|');
+		(result.deviceActivityByDevice[device] ??= []).push({
+			cocoaSeconds: Number(cocoa),
+			entries
+		});
 	}
 	return result;
 }
