@@ -11,6 +11,10 @@ const DEV = 'AAAAAAAA-1111-2222-3333-444444444444';
 const streamsGz = new Uint8Array(
 	readFileSync(new URL('../data/fixtures/streams.tar.gz', import.meta.url))
 );
+const deviceActivityGz = new Uint8Array(
+	readFileSync(new URL('../data/fixtures/device-activity.tar.gz', import.meta.url))
+);
+const DA_DEV = 'BBBBBBBB-1111-2222-3333-444444444444';
 
 let SQL: SqlJsStatic;
 let knowledgecGz: Uint8Array;
@@ -57,7 +61,11 @@ function fakeDir(entries: Record<string, Record<string, Uint8Array>>): DirLike {
 
 describe('importBackups', () => {
 	it('walks snapshots, decodes streams + knowledgeC, dedups across overlaps', async () => {
-		const snapshot = { 'biome-streams.tar.gz': streamsGz, 'knowledgeC.db.gz': knowledgecGz };
+		const snapshot = {
+			'biome-streams.tar.gz': streamsGz,
+			'knowledgeC.db.gz': knowledgecGz,
+			'device-activity.tar.gz': deviceActivityGz
+		};
 		const result = await importBackups(
 			// second snapshot duplicates the first - dedup must collapse it
 			fakeDir({ '2026-01-05': snapshot, '2026-01-12': snapshot, 'not-a-snapshot': {} }),
@@ -68,6 +76,14 @@ describe('importBackups', () => {
 		// live segment yields 7 events; tombstone + local are skipped by path
 		expect(result.focusEventsByDevice[DEV]).toHaveLength(14); // 7 x 2 snapshots, deduped later
 		expect(result.knowledgecSessionsByDevice['knowledgec']).toHaveLength(2);
+		// Cloud Daily segment parsed once - the duplicate snapshot's copy of the
+		// same (device, day) OVERWRITES rather than duplicates; Hourly/Local ignored
+		expect(result.deviceActivityByDevice[DA_DEV]).toHaveLength(1);
+		expect(result.deviceActivityByDevice[DA_DEV][0].cocoaSeconds).toBe(809409600);
+		expect(result.deviceActivityByDevice[DA_DEV][0].entries).toContainEqual({
+			key: 'web:example-movies.test',
+			seconds: 3558.5
+		});
 		expect(result.errors).toEqual([]);
 	});
 

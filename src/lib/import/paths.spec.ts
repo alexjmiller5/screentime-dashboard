@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { isSnapshotDirName, classifyStreamFile, guessDeviceLabel } from './paths';
+import {
+	isSnapshotDirName,
+	classifyStreamFile,
+	classifyDeviceActivityFile,
+	guessDeviceLabel
+} from './paths';
 import type { FocusEvent } from '../data/infocus';
 
 const ev = (bundleId: string): FocusEvent => ({ tsMs: 0, bundleId, focus: true });
@@ -35,6 +40,32 @@ describe('isSnapshotDirName', () => {
 	it('rejects non-snapshot entries', () => {
 		expect(isSnapshotDirName('.DS_Store')).toBe(false);
 		expect(isSnapshotDirName('notes')).toBe(false);
+	});
+});
+
+describe('classifyDeviceActivityFile', () => {
+	it('extracts device uuid and day timestamp from Cloud Daily segments', () => {
+		expect(
+			classifyDeviceActivityFile(
+				'com.apple.DeviceActivity/Cloud/000830-08-user/BBBBBBBB-1111-2222-3333-444444444444/Daily/ActivitySegments/809409600.0.plist'
+			)
+		).toEqual({ device: 'BBBBBBBB-1111-2222-3333-444444444444', cocoaSeconds: 809409600 });
+	});
+
+	it('ignores Hourly, Local, and sync-state files', () => {
+		expect(
+			classifyDeviceActivityFile(
+				'com.apple.DeviceActivity/Cloud/u/BBBBBBBB-1111-2222-3333-444444444444/Hourly/ActivitySegments/809409600.0.plist'
+			)
+		).toBeNull();
+		expect(
+			classifyDeviceActivityFile(
+				'com.apple.DeviceActivity/Local/Daily/ActivitySegments/809409600.0.plist'
+			)
+		).toBeNull();
+		expect(
+			classifyDeviceActivityFile('com.apple.DeviceActivity/Cloud/PrivateSyncState.plist')
+		).toBeNull();
 	});
 });
 

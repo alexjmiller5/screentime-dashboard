@@ -10,7 +10,7 @@
 
 <!-- Nominal magnitude comparison: every bar wears slot-1 (identity is the row
      label, length is the data) with the value labeled at the tip. -->
-<ol class="flex flex-col gap-2">
+<ol class="flex max-h-96 flex-col gap-2 overflow-y-auto pr-1">
 	{#each apps as app (app.bundleId)}
 		<li class="grid grid-cols-[8rem_1fr_4.5rem] items-center gap-3 text-sm">
 			<span class="truncate text-foreground" title={app.bundleId}>{appName(app.bundleId)}</span>

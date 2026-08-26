@@ -76,6 +76,43 @@ describe('buildUsageCache', () => {
 		]);
 	});
 
+	it('adds DeviceActivity segments as screentime rows (apps + web domains)', () => {
+		const cache = buildUsageCache({
+			timeZone: TZ,
+			importedAt: '2026-08-25T00:00:00Z',
+			devices: {},
+			focusEventsByDevice: {},
+			knowledgecSessionsByDevice: {},
+			deviceActivityByDevice: {
+				'uuid-da': [
+					{
+						cocoaSeconds: 809409600, // 2026-08-26 in New York
+						entries: [
+							{ key: 'web:example-movies.test', seconds: 3558.5 },
+							{ key: 'com.example.browser.ios', seconds: 3594.25 }
+						]
+					}
+				]
+			}
+		});
+		expect(cache.rows).toEqual([
+			{
+				source: 'screentime',
+				device: 'uuid-da',
+				date: '2026-08-26',
+				bundleId: 'com.example.browser.ios',
+				seconds: 3594
+			},
+			{
+				source: 'screentime',
+				device: 'uuid-da',
+				date: '2026-08-26',
+				bundleId: 'web:example-movies.test',
+				seconds: 3559
+			}
+		]);
+	});
+
 	it('drops system shell surfaces - lock screen and springboard are not usage', () => {
 		// loginwindow keeps "focus" for entire lock periods (419h of fake usage
 		// in the real archive) - shell bundles must never become rows.

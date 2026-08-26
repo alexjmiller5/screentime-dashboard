@@ -3,9 +3,10 @@
 
 import { deriveDailyUsage, aggregateSessions, type UsageSession } from './intervals';
 import type { FocusEvent } from './infocus';
+import { segmentsToRows, type DeviceSegment } from './deviceactivity';
 
 export interface UsageRow {
-	source: 'infocus' | 'knowledgec';
+	source: 'infocus' | 'knowledgec' | 'screentime';
 	device: string;
 	date: string;
 	bundleId: string;
@@ -35,6 +36,8 @@ export interface BuildInput {
 	focusEventsByDevice: Record<string, FocusEvent[]>;
 	/** All knowledgeC sessions per device, across snapshots (dupes ok). */
 	knowledgecSessionsByDevice: Record<string, UsageSession[]>;
+	/** DeviceActivity daily segments per device (already deduped by day). */
+	deviceActivityByDevice?: Record<string, DeviceSegment[]>;
 }
 
 export function buildUsageCache(input: BuildInput): UsageCache {
@@ -58,6 +61,8 @@ export function buildUsageCache(input: BuildInput): UsageCache {
 			rows.push({ source: 'knowledgec', device, ...daily });
 		}
 	}
+
+	rows.push(...segmentsToRows(input.deviceActivityByDevice ?? {}, input.timeZone));
 
 	const usageRows = rows.filter((r) => !SHELL_BUNDLE_RE.test(r.bundleId));
 	usageRows.sort(

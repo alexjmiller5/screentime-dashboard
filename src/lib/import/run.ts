@@ -23,7 +23,8 @@ export async function uploadCache(
 		importedAt: new Date().toISOString(),
 		devices,
 		focusEventsByDevice: scan.focusEventsByDevice,
-		knowledgecSessionsByDevice: scan.knowledgecSessionsByDevice
+		knowledgecSessionsByDevice: scan.knowledgecSessionsByDevice,
+		deviceActivityByDevice: scan.deviceActivityByDevice
 	});
 	const res = await fetch('/api/usage', { method: 'PUT', body: JSON.stringify(cache) });
 	if (!res.ok) throw new Error(`upload failed: ${res.status}`);

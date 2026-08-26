@@ -1,0 +1,47 @@
+{
+	"edge": {
+		"big": 1099511627776,
+		"false": false,
+		"longString": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+		"manyItems": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+		"negative": -42,
+		"unicode": "caf\u00e9 \u65e5\u672c\u8a9e",
+		"zero": 0
+	},
+	"value": {
+		"categoryActivities": [
+			{
+				"applicationActivities": [],
+				"identifier": "DH1009",
+				"totalActivityDuration": 3560.25,
+				"webDomainActivities": [
+					{
+						"domain": "example-movies.test",
+						"isTrusted": true,
+						"totalActivityDuration": 3558.5
+					},
+					{
+						"domain": "ads.example.test",
+						"isTrusted": false,
+						"totalActivityDuration": 1.75
+					}
+				]
+			},
+			{
+				"applicationActivities": [
+					{
+						"bundleIdentifier": "com.example.browser.ios",
+						"isTrusted": true,
+						"numberOfNotifications": 0,
+						"numberOfPickups": 3,
+						"totalActivityDuration": 3594.25
+					}
+				],
+				"identifier": "DH1011",
+				"totalActivityDuration": 3594.25,
+				"webDomainActivities": []
+			}
+		],
+		"totalActivityDuration": 7154.5
+	}
+}
