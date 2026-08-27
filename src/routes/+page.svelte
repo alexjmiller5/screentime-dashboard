@@ -1,10 +1,16 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { IconFolderOpen, IconTable, IconChartBar } from '@tabler/icons-svelte';
+	import {
+		IconFolderOpen,
+		IconTable,
+		IconChartBar,
+		IconAdjustmentsHorizontal
+	} from '@tabler/icons-svelte';
 	import Seo from '$lib/components/seo.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import * as Select from '$lib/components/ui/select';
+	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import StackedChart from '$lib/components/StackedChart.svelte';
 	import StatTile from '$lib/components/StatTile.svelte';
 	import TopAppsList from '$lib/components/TopAppsList.svelte';
@@ -19,6 +25,7 @@
 		watchlistDaily,
 		matchesTerm,
 		electUsage,
+		combineUsage,
 		rollingMean,
 		dateRange
 	} from '$lib/viz/series';
@@ -34,15 +41,27 @@
 	let scan = $state<ImportResult | null>(null);
 
 	let rangeDays = $state('90');
-	// Apps and websites are parallel breakdowns of the same minutes - never
-	// summed together, so the view picks one.
-	let view = $state<'apps' | 'websites'>('apps');
+	// Apps and websites are parallel breakdowns of the same minutes. Combined
+	// swaps browsers for their domains (no double counting); the pure views
+	// show one breakdown at a time.
+	let view = $state<'combined' | 'apps' | 'websites'>('combined');
 	let excludedDevices: string[] = $state([]);
+	// Explicitly picked chart series per view (empty = auto top-8).
+	let picked = $state<{ combined: string[]; apps: string[]; websites: string[] }>({
+		combined: [],
+		apps: [],
+		websites: []
+	});
 	let watchlistText = $state('youtube, instagram');
 	let showTable = $state(false);
 
 	onMount(async () => {
 		watchlistText = localStorage.getItem(WATCHLIST_KEY) ?? watchlistText;
+		try {
+			picked = JSON.parse(localStorage.getItem('screentime:picked') ?? '') ?? picked;
+		} catch {
+			/* first run */
+		}
 		const res = await fetch('/api/usage');
 		if (res.ok) cache = (await res.json()) as UsageCache;
 		loading = false;
@@ -55,18 +74,25 @@
 			.filter(Boolean)
 	);
 	$effect(() => localStorage.setItem(WATCHLIST_KEY, watchlistText));
+	$effect(() => localStorage.setItem('screentime:picked', JSON.stringify(picked)));
 
 	const deviceLabel = (id: string): string => cache?.devices[id] ?? id.slice(0, 8);
 
 	// Collapse the measurement pipelines: per (device label, day) the best
 	// available source wins, so nothing is ever double-counted.
 	const elected = $derived(cache ? electUsage(cache.rows, deviceLabel) : { apps: [], webs: [] });
-	const sourceRows = $derived(view === 'apps' ? elected.apps : elected.webs);
 	const deviceLabels = $derived(
 		[...new Set([...elected.apps, ...elected.webs].map((r) => deviceLabel(r.device)))].sort()
 	);
+	const byDevice = (rs: typeof elected.apps): typeof elected.apps =>
+		rs.filter((r) => !excludedDevices.includes(deviceLabel(r.device)));
+	const appsDev = $derived(byDevice(elected.apps));
+	const websDev = $derived(byDevice(elected.webs));
+	const sourceRows = $derived(
+		view === 'combined' ? combineUsage(appsDev, websDev) : view === 'apps' ? appsDev : websDev
+	);
 	const lastDate = $derived(
-		elected.apps.length > 0 ? elected.apps.reduce((m, r) => (r.date > m ? r.date : m), '') : ''
+		appsDev.length > 0 ? appsDev.reduce((m, r) => (r.date > m ? r.date : m), '') : ''
 	);
 	const startDate = $derived(
 		rangeDays === 'all' || lastDate === ''
@@ -75,20 +101,25 @@
 					.toISOString()
 					.slice(0, 10)
 	);
-	const rows = $derived(
-		filterRows(sourceRows, { startDate, endDate: lastDate || undefined }).filter(
-			(r) => !excludedDevices.includes(deviceLabel(r.device))
-		)
-	);
+	const rows = $derived(filterRows(sourceRows, { startDate, endDate: lastDate || undefined }));
 
 	// 8 named series = every validated palette slot; the rest folds to Other in
-	// the chart, but the ranked list below shows everything.
-	const stacked = $derived(dailyByApp(rows, 8, appName));
+	// the chart (picked series override the auto top-8); the ranked list below
+	// shows everything.
+	const stacked = $derived(dailyByApp(rows, 8, appName, picked[view]));
 	const ranked = $derived(topApps(rows, Infinity, appName));
+	const pickCandidates = $derived(ranked.slice(0, 30).map((t) => t.bundleId));
+	function togglePick(key: string): void {
+		const current = picked[view];
+		picked = {
+			...picked,
+			[view]: current.includes(key) ? current.filter((k) => k !== key) : [...current, key]
+		};
+	}
 
 	// Watchlist trend over the full history (the point is the long arc) across
 	// apps AND websites, smoothed with a 7-day rolling mean.
-	const watchRows = $derived([...elected.apps, ...elected.webs]);
+	const watchRows = $derived([...appsDev, ...websDev]);
 	const watchTrend = $derived.by(() => {
 		const daily = watchlistDaily(watchRows, watchlist);
 		return {
@@ -118,8 +149,8 @@
 				0
 			);
 		const inWatchlist = (b: string): boolean => watchlist.some((t) => matchesTerm(b, t));
-		const thisWeek = sum(elected.apps, week(0));
-		const priorWeek = sum(elected.apps, week(7));
+		const thisWeek = sum(sourceRows, week(0));
+		const priorWeek = sum(sourceRows, week(7));
 		const watchWeek = sum(watchRows, week(0), inWatchlist);
 		const watchPrior = sum(watchRows, week(7), inWatchlist);
 		return { thisWeek, priorWeek, watchWeek, watchPrior };
@@ -212,12 +243,49 @@
 			</Select.Root>
 
 			<Select.Root type="single" bind:value={view}>
-				<Select.Trigger>{view === 'apps' ? 'Apps' : 'Websites'}</Select.Trigger>
+				<Select.Trigger>
+					{view === 'combined'
+						? 'Apps + websites'
+						: view === 'apps'
+							? 'Apps only'
+							: 'Websites only'}
+				</Select.Trigger>
 				<Select.Content>
-					<Select.Item value="apps">Apps</Select.Item>
-					<Select.Item value="websites">Websites</Select.Item>
+					<Select.Item value="combined">Apps + websites</Select.Item>
+					<Select.Item value="apps">Apps only</Select.Item>
+					<Select.Item value="websites">Websites only</Select.Item>
 				</Select.Content>
 			</Select.Root>
+
+			<DropdownMenu.Root>
+				<DropdownMenu.Trigger>
+					{#snippet child({ props })}
+						<Button {...props} variant="outline" size="sm">
+							<IconAdjustmentsHorizontal size={16} />
+							{picked[view].length === 0 ? 'Series: auto' : `Series: ${picked[view].length} picked`}
+						</Button>
+					{/snippet}
+				</DropdownMenu.Trigger>
+				<DropdownMenu.Content class="max-h-96 overflow-y-auto">
+					<DropdownMenu.Item
+						onclick={() => (picked = { ...picked, [view]: [] })}
+						disabled={picked[view].length === 0}
+					>
+						Auto (top 8)
+					</DropdownMenu.Item>
+					<DropdownMenu.Separator />
+					{#each pickCandidates as key (key)}
+						<DropdownMenu.CheckboxItem
+							checked={picked[view].includes(key)}
+							disabled={!picked[view].includes(key) && picked[view].length >= 8}
+							closeOnSelect={false}
+							onCheckedChange={() => togglePick(key)}
+						>
+							{key}
+						</DropdownMenu.CheckboxItem>
+					{/each}
+				</DropdownMenu.Content>
+			</DropdownMenu.Root>
 
 			{#each deviceLabels as label (label)}
 				<Button
