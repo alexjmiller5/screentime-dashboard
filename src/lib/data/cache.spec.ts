@@ -36,6 +36,15 @@ describe('buildUsageCache', () => {
 			importedAt: '2026-08-25T00:00:00Z',
 			timeZone: TZ,
 			devices: { 'uuid-phone': 'iPhone', 'uuid-mac': 'MacBook' },
+			hourly: [
+				{
+					device: 'uuid-phone',
+					date: '2026-01-05',
+					hour: 10,
+					bundleId: 'com.example.a',
+					seconds: 60
+				}
+			],
 			// deterministic sort: date, then device, then bundle
 			rows: [
 				{
@@ -110,6 +119,27 @@ describe('buildUsageCache', () => {
 				bundleId: 'web:example-movies.test',
 				seconds: 3559
 			}
+		]);
+	});
+
+	it('derives per-hour rows for the day grid (shell surfaces excluded)', () => {
+		const cache = buildUsageCache({
+			timeZone: TZ,
+			importedAt: '2026-08-25T00:00:00Z',
+			devices: {},
+			focusEventsByDevice: {
+				phone: [
+					// 15:00-15:30 UTC = 10:00-10:30 New York (EDT... January: EST 10:00)
+					ev('2026-01-05T15:00:00Z', 'com.example.a', true),
+					ev('2026-01-05T15:30:00Z', 'com.example.a', false),
+					ev('2026-01-05T15:00:00Z', 'com.apple.loginwindow', true),
+					ev('2026-01-05T16:00:00Z', 'com.apple.loginwindow', false)
+				]
+			},
+			knowledgecSessionsByDevice: {}
+		});
+		expect(cache.hourly).toEqual([
+			{ device: 'phone', date: '2026-01-05', hour: 10, bundleId: 'com.example.a', seconds: 1800 }
 		]);
 	});
 

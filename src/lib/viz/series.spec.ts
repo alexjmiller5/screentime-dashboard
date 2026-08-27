@@ -4,10 +4,9 @@ import {
 	dailyByApp,
 	topApps,
 	dateRange,
-	rollingMean,
-	watchlistDaily,
 	electUsage,
-	combineUsage
+	combineUsage,
+	dayGridCells
 } from './series';
 import type { UsageRow } from '../data/cache';
 import { appName } from './format';
@@ -123,38 +122,6 @@ describe('topApps', () => {
 	});
 });
 
-describe('rollingMean', () => {
-	it('averages over the trailing window', () => {
-		expect(rollingMean([2, 4, 6, 8], 2)).toEqual([2, 3, 5, 7]);
-	});
-});
-
-describe('watchlistDaily', () => {
-	it('matches bundles by substring, case-insensitive, over the full axis', () => {
-		const result = watchlistDaily(
-			[
-				row('2026-01-01', 'com.google.ios.youtube', 60),
-				row('2026-01-02', 'com.burbn.instagram', 120),
-				row('2026-01-02', 'com.a', 999)
-			],
-			['youtube', 'instagram']
-		);
-		expect(result.dates).toEqual(['2026-01-01', '2026-01-02']);
-		expect(result.series).toEqual([
-			{ key: 'youtube', data: [60, 0] },
-			{ key: 'instagram', data: [0, 120] }
-		]);
-	});
-
-	it('matches by display name too, so PWAs count toward their app', () => {
-		const result = watchlistDaily(
-			[row('2026-01-01', 'com.google.Chrome.app.agimnkijcaahngcdmfeangaknmldooml', 300)],
-			['youtube']
-		);
-		expect(result.series).toEqual([{ key: 'youtube', data: [300] }]);
-	});
-});
-
 describe('combineUsage', () => {
 	it('replaces browser time with its domains, keeping only the residual', () => {
 		const apps = [
@@ -210,5 +177,29 @@ describe('electUsage', () => {
 		const result = electUsage(rows, labelOf);
 		expect(result.webs).toEqual([row('2026-01-05', 'web:youtube.com', 60, 'da-1', 'screentime')]);
 		expect(result.apps).toEqual([row('2026-01-05', 'com.a', 100, 'biome-1', 'infocus')]);
+	});
+});
+
+describe('dayGridCells', () => {
+	it('builds a [date][hour] matrix of dominant app + hour total + top constituents', () => {
+		const cells = dayGridCells(
+			[
+				{ device: 'p', date: '2026-01-05', hour: 9, bundleId: 'com.a', seconds: 1800 },
+				{ device: 'p', date: '2026-01-05', hour: 9, bundleId: 'com.b', seconds: 600 },
+				{ device: 'p', date: '2026-01-06', hour: 22, bundleId: 'com.b', seconds: 300 }
+			],
+			['2026-01-05', '2026-01-06'],
+			(b) => b
+		);
+		expect(cells[0][9]).toEqual({
+			key: 'com.a',
+			seconds: 2400,
+			top: [
+				{ key: 'com.a', seconds: 1800 },
+				{ key: 'com.b', seconds: 600 }
+			]
+		});
+		expect(cells[0][22]).toBeNull();
+		expect(cells[1][22]?.key).toBe('com.b');
 	});
 });

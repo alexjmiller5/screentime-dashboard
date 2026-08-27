@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appName, formatDuration, termLabel } from './format';
+import { appName, formatDuration } from './format';
 
 describe('appName', () => {
 	it('prettifies known bundles and falls back to the last segment', () => {
@@ -26,15 +26,6 @@ describe('appName', () => {
 
 	it('renders web-domain keys as the bare domain', () => {
 		expect(appName('web:movies.example.test')).toBe('movies.example.test');
-	});
-});
-
-describe('termLabel', () => {
-	it('title-cases known watchlist terms, capitalizes the rest', () => {
-		expect(termLabel('youtube')).toBe('YouTube');
-		expect(termLabel('instagram')).toBe('Instagram');
-		expect(termLabel('tiktok')).toBe('TikTok');
-		expect(termLabel('reddit')).toBe('Reddit');
 	});
 });
 
