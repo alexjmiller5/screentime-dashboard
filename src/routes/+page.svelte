@@ -8,7 +8,6 @@
 	} from '@tabler/icons-svelte';
 	import Seo from '$lib/components/seo.svelte';
 	import { Button } from '$lib/components/ui/button';
-	import { Input } from '$lib/components/ui/input';
 	import * as Select from '$lib/components/ui/select';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import StackedChart from '$lib/components/StackedChart.svelte';
@@ -16,22 +15,18 @@
 	import TopAppsList from '$lib/components/TopAppsList.svelte';
 	import DataTable from '$lib/components/DataTable.svelte';
 	import ImportDialog from '$lib/components/ImportDialog.svelte';
+	import DayGrid from '$lib/components/DayGrid.svelte';
 	import type { UsageCache } from '$lib/data/cache';
 	import type { ImportResult } from '$lib/import/importer';
 	import {
 		filterRows,
 		dailyByApp,
 		topApps,
-		watchlistDaily,
-		matchesTerm,
 		electUsage,
 		combineUsage,
-		rollingMean,
-		dateRange
+		dayGridCells
 	} from '$lib/viz/series';
-	import { appName, formatDuration, termLabel } from '$lib/viz/format';
-
-	const WATCHLIST_KEY = 'screentime:watchlist';
+	import { appName, formatDuration } from '$lib/viz/format';
 
 	let cache = $state<UsageCache | null>(null);
 	let loading = $state(true);
@@ -52,11 +47,9 @@
 		apps: [],
 		websites: []
 	});
-	let watchlistText = $state('youtube, instagram');
 	let showTable = $state(false);
 
 	onMount(async () => {
-		watchlistText = localStorage.getItem(WATCHLIST_KEY) ?? watchlistText;
 		try {
 			picked = JSON.parse(localStorage.getItem('screentime:picked') ?? '') ?? picked;
 		} catch {
@@ -67,13 +60,6 @@
 		loading = false;
 	});
 
-	const watchlist = $derived(
-		watchlistText
-			.split(',')
-			.map((t) => t.trim())
-			.filter(Boolean)
-	);
-	$effect(() => localStorage.setItem(WATCHLIST_KEY, watchlistText));
 	$effect(() => localStorage.setItem('screentime:picked', JSON.stringify(picked)));
 
 	const deviceLabel = (id: string): string => cache?.devices[id] ?? id.slice(0, 8);
@@ -108,6 +94,18 @@
 	// shows everything.
 	const stacked = $derived(dailyByApp(rows, 8, appName, picked[view]));
 	const ranked = $derived(topApps(rows, Infinity, appName));
+	// Day-rhythm grid: per-hour focus data, device-filtered, on the chart's axis.
+	const hourlyRows = $derived(
+		(cache?.hourly ?? []).filter(
+			(h) =>
+				!excludedDevices.includes(deviceLabel(h.device)) &&
+				(!startDate || h.date >= startDate) &&
+				(!lastDate || h.date <= lastDate)
+		)
+	);
+	const gridCells = $derived(dayGridCells(hourlyRows, stacked.dates, appName));
+	const namedKeys = $derived(stacked.series.map((s) => s.key).filter((k) => k !== 'Other'));
+
 	const pickCandidates = $derived(ranked.slice(0, 30).map((t) => t.bundleId));
 	function togglePick(key: string): void {
 		const current = picked[view];
@@ -116,51 +114,6 @@
 			[view]: current.includes(key) ? current.filter((k) => k !== key) : [...current, key]
 		};
 	}
-
-	// Watchlist trend over the full history (the point is the long arc) across
-	// apps AND websites, smoothed with a 7-day rolling mean.
-	const watchRows = $derived([...appsDev, ...websDev]);
-	const watchTrend = $derived.by(() => {
-		const daily = watchlistDaily(watchRows, watchlist);
-		return {
-			dates: daily.dates,
-			series: daily.series.map((s) => ({
-				key: `${termLabel(s.key)} · 7d avg`,
-				data: rollingMean(s.data, 7)
-			}))
-		};
-	});
-
-	// KPIs: this week vs prior week, from the source rows (all devices).
-	const kpis = $derived.by(() => {
-		if (lastDate === '') return null;
-		const day = 86_400_000;
-		const end = Date.parse(lastDate);
-		const week = (offset: number): Set<string> =>
-			new Set(
-				dateRange(
-					new Date(end - (offset + 6) * day).toISOString().slice(0, 10),
-					new Date(end - offset * day).toISOString().slice(0, 10)
-				)
-			);
-		const sum = (rowSet: typeof rows, dates: Set<string>, match?: (b: string) => boolean): number =>
-			rowSet.reduce(
-				(acc, r) => (dates.has(r.date) && (!match || match(r.bundleId)) ? acc + r.seconds : acc),
-				0
-			);
-		const inWatchlist = (b: string): boolean => watchlist.some((t) => matchesTerm(b, t));
-		const thisWeek = sum(sourceRows, week(0));
-		const priorWeek = sum(sourceRows, week(7));
-		const watchWeek = sum(watchRows, week(0), inWatchlist);
-		const watchPrior = sum(watchRows, week(7), inWatchlist);
-		return { thisWeek, priorWeek, watchWeek, watchPrior };
-	});
-
-	const delta = (now: number, prior: number): string => {
-		if (prior === 0) return 'no prior week';
-		const diff = now - prior;
-		return `${diff <= 0 ? '−' : '+'}${formatDuration(Math.abs(diff))} vs prior week`;
-	};
 
 	async function startImport(): Promise<void> {
 		importError = '';
@@ -305,40 +258,18 @@
 					{label}
 				</Button>
 			{/each}
-
-			<div class="ml-auto flex items-center gap-2">
-				<label for="watchlist" class="text-xs whitespace-nowrap text-muted-foreground">
-					Watchlist
-				</label>
-				<Input id="watchlist" class="h-8 w-52" bind:value={watchlistText} />
-			</div>
 		</div>
 
-		<!-- KPIs -->
-		{#if kpis}
-			<div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-				<StatTile
-					label="Screen time this week"
-					value={formatDuration(kpis.thisWeek)}
-					delta={delta(kpis.thisWeek, kpis.priorWeek)}
-					deltaGood={kpis.thisWeek <= kpis.priorWeek}
-				/>
-				<StatTile
-					label="Watchlist this week"
-					value={formatDuration(kpis.watchWeek)}
-					delta={delta(kpis.watchWeek, kpis.watchPrior)}
-					deltaGood={kpis.watchWeek <= kpis.watchPrior}
-				/>
-				<StatTile
-					label="Daily average (range)"
-					value={formatDuration(
-						stacked.dates.length > 0
-							? rows.reduce((a, r) => a + r.seconds, 0) / stacked.dates.length
-							: 0
-					)}
-				/>
-			</div>
-		{/if}
+		<div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+			<StatTile
+				label="Daily average (range)"
+				value={formatDuration(
+					stacked.dates.length > 0
+						? rows.reduce((a, r) => a + r.seconds, 0) / stacked.dates.length
+						: 0
+				)}
+			/>
+		</div>
 
 		<!-- main chart -->
 		<section class="rounded-lg border bg-card p-4 sm:p-6">
@@ -355,12 +286,22 @@
 			{/if}
 		</section>
 
-		<div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
-			<section class="rounded-lg border bg-card p-4 sm:p-6">
-				<h2 class="mb-3 text-sm font-medium">Watchlist trend · 7-day average</h2>
-				<StackedChart data={watchTrend} kind="line" labelFor={appName} />
-			</section>
+		<section class="rounded-lg border bg-card p-4 sm:p-6">
+			<h2 class="mb-1 text-sm font-medium">Day rhythm</h2>
+			<p class="mb-3 text-xs text-muted-foreground">
+				Hour of day × date - each cell is that hour's dominant app, in the chart's colors; blank is
+				screen off. Hover for the hour's breakdown.
+			</p>
+			{#if hourlyRows.length > 0}
+				<DayGrid dates={stacked.dates} cells={gridCells} {namedKeys} />
+			{:else}
+				<p class="py-6 text-center text-sm text-muted-foreground">
+					No per-hour data in this cache yet - run Import backups again to add it.
+				</p>
+			{/if}
+		</section>
 
+		<div class="grid grid-cols-1 gap-6">
 			<section class="rounded-lg border bg-card p-4 sm:p-6">
 				<h2 class="mb-3 text-sm font-medium">Top apps in range</h2>
 				<TopAppsList apps={ranked} />

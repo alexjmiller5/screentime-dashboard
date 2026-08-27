@@ -2,8 +2,7 @@
 // The sources are parallel measurements of the SAME minutes and are never
 // summed together - electUsage picks the best one per (device label, day).
 
-import type { UsageRow } from '../data/cache';
-import { appName } from './format';
+import type { UsageRow, HourlyRow } from '../data/cache';
 
 export interface RowFilter {
 	source?: UsageRow['source'];
@@ -108,18 +107,6 @@ export function topApps(
 		.slice(0, n);
 }
 
-/** Trailing mean over up to `window` values (partial windows at the start). */
-export function rollingMean(values: number[], window: number): number[] {
-	const out: number[] = [];
-	let sum = 0;
-	for (let i = 0; i < values.length; i++) {
-		sum += values[i];
-		if (i >= window) sum -= values[i - window];
-		out.push(sum / Math.min(i + 1, window));
-	}
-	return out;
-}
-
 const SOURCE_RANK: Record<UsageRow['source'], number> = {
 	screentime: 0, // Apple's official aggregates - matches the Settings pane
 	infocus: 1, // our focus-session derivation - fills Screen Time's gaps
@@ -199,22 +186,44 @@ export function combineUsage(apps: UsageRow[], webs: UsageRow[]): UsageRow[] {
 	return [...out, ...webs];
 }
 
-/** True when a bundle counts toward a watchlist term: matches the bundle id
- * OR the display name, so PWAs ("YouTube (PWA)") count toward their app. */
-export function matchesTerm(bundleId: string, term: string): boolean {
-	const t = term.toLowerCase();
-	return bundleId.toLowerCase().includes(t) || appName(bundleId).toLowerCase().includes(t);
+export interface DayGridCell {
+	/** Dominant app identity for the hour. */
+	key: string;
+	/** Total usage seconds in the hour, all apps. */
+	seconds: number;
+	/** Largest constituents, for the tooltip. */
+	top: { key: string; seconds: number }[];
 }
 
-/** Daily seconds per watchlist term (case-insensitive). */
-export function watchlistDaily(rows: UsageRow[], terms: string[]): StackedSeries {
-	const dates = axis(rows);
-	const index = new Map(dates.map((d, i) => [d, i]));
-	const series = terms.map((key) => ({ key, data: dates.map(() => 0) }));
-	for (const r of rows) {
-		for (const s of series) {
-			if (matchesTerm(r.bundleId, s.key)) s.data[index.get(r.date)!] += r.seconds;
-		}
+/** [dateIndex][hour 0-23] matrix for the day-rhythm grid; null = no usage. */
+export function dayGridCells(
+	hourly: HourlyRow[],
+	dates: string[],
+	keyOf: (bundleId: string) => string
+): (DayGridCell | null)[][] {
+	const dateIndex = new Map(dates.map((d, i) => [d, i]));
+	const buckets: (Map<string, number> | null)[][] = dates.map(() =>
+		Array.from({ length: 24 }, () => null)
+	);
+	for (const r of hourly) {
+		const di = dateIndex.get(r.date);
+		if (di === undefined) continue;
+		const bucket = (buckets[di][r.hour] ??= new Map());
+		const key = keyOf(r.bundleId);
+		bucket.set(key, (bucket.get(key) ?? 0) + r.seconds);
 	}
-	return { dates, series };
+	return buckets.map((day) =>
+		day.map((bucket) => {
+			if (!bucket) return null;
+			const top = [...bucket.entries()]
+				.map(([key, seconds]) => ({ key, seconds }))
+				.sort((a, b) => b.seconds - a.seconds)
+				.slice(0, 3);
+			return {
+				key: top[0].key,
+				seconds: [...bucket.values()].reduce((a, b) => a + b, 0),
+				top
+			};
+		})
+	);
 }

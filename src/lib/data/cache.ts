@@ -1,7 +1,12 @@
 // The R2 cache document: everything the dashboard needs, already derived.
 // Built client-side at import time; the Worker only stores and serves it.
 
-import { deriveDailyUsage, aggregateSessions, type UsageSession } from './intervals';
+import {
+	deriveDailyUsage,
+	deriveHourlyUsage,
+	aggregateSessions,
+	type UsageSession
+} from './intervals';
 import type { FocusEvent } from './infocus';
 import { segmentsToRows, type DeviceSegment } from './deviceactivity';
 
@@ -13,6 +18,15 @@ export interface UsageRow {
 	seconds: number;
 }
 
+export interface HourlyRow {
+	device: string;
+	date: string;
+	/** 0-23, local time. */
+	hour: number;
+	bundleId: string;
+	seconds: number;
+}
+
 export interface UsageCache {
 	version: 1;
 	importedAt: string;
@@ -20,6 +34,8 @@ export interface UsageCache {
 	/** device uuid -> human label, assigned in the UI (never hardcoded). */
 	devices: Record<string, string>;
 	rows: UsageRow[];
+	/** Per-hour focus-derived usage for the day-rhythm grid (>=30s slices). */
+	hourly?: HourlyRow[];
 }
 
 /** System shell surfaces whose "focus" is not usage: the lock screen holds
@@ -64,6 +80,13 @@ export function buildUsageCache(input: BuildInput): UsageCache {
 
 	rows.push(...segmentsToRows(input.deviceActivityByDevice ?? {}, input.timeZone));
 
+	const hourly: HourlyRow[] = [];
+	for (const [device, events] of Object.entries(input.focusEventsByDevice)) {
+		for (const h of deriveHourlyUsage(events, { timeZone: input.timeZone })) {
+			if (h.seconds >= 30 && !SHELL_BUNDLE_RE.test(h.bundleId)) hourly.push({ device, ...h });
+		}
+	}
+
 	const usageRows = rows.filter((r) => !SHELL_BUNDLE_RE.test(r.bundleId));
 	usageRows.sort(
 		(a, b) =>
@@ -78,6 +101,7 @@ export function buildUsageCache(input: BuildInput): UsageCache {
 		importedAt: input.importedAt,
 		timeZone: input.timeZone,
 		devices: input.devices,
-		rows: usageRows
+		rows: usageRows,
+		hourly
 	};
 }

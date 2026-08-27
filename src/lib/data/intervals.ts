@@ -42,10 +42,8 @@ function makeDateParts(timeZone: string) {
 	};
 }
 
-export function deriveDailyUsage(events: FocusEvent[], options: DeriveOptions): DailyUsage[] {
-	const maxSessionMs = options.maxSessionMs ?? 4 * 60 * 60 * 1000;
-	const parts = makeDateParts(options.timeZone);
-
+/** Dedup + pair focus/unfocus events into sessions. */
+export function sessionsFromEvents(events: FocusEvent[], maxSessionMs: number): UsageSession[] {
 	const seen = new Set<string>();
 	const sorted = events
 		.filter((e) => {
@@ -56,9 +54,8 @@ export function deriveDailyUsage(events: FocusEvent[], options: DeriveOptions): 
 		})
 		.sort((a, b) => a.tsMs - b.tsMs);
 
-	// Pair focus/unfocus per bundle into sessions.
 	const open = new Map<string, number>();
-	const sessions: { bundleId: string; startMs: number; endMs: number }[] = [];
+	const sessions: UsageSession[] = [];
 	const close = (bundleId: string, endMs: number) => {
 		const startMs = open.get(bundleId);
 		if (startMs === undefined || endMs <= startMs) return;
@@ -73,8 +70,50 @@ export function deriveDailyUsage(events: FocusEvent[], options: DeriveOptions): 
 			close(e.bundleId, e.tsMs);
 		}
 	}
+	return sessions;
+}
 
-	return aggregateSessions(sessions, options.timeZone);
+export function deriveDailyUsage(events: FocusEvent[], options: DeriveOptions): DailyUsage[] {
+	const maxSessionMs = options.maxSessionMs ?? 4 * 60 * 60 * 1000;
+	return aggregateSessions(sessionsFromEvents(events, maxSessionMs), options.timeZone);
+}
+
+export interface HourlyUsage {
+	date: string;
+	hour: number;
+	bundleId: string;
+	seconds: number;
+}
+
+/** Sessions sliced into per-hour buckets (local time) - feeds the day grid. */
+export function deriveHourlyUsage(events: FocusEvent[], options: DeriveOptions): HourlyUsage[] {
+	const maxSessionMs = options.maxSessionMs ?? 4 * 60 * 60 * 1000;
+	const parts = makeDateParts(options.timeZone);
+	const HOUR_MS = 3_600_000;
+
+	const totals = new Map<string, number>();
+	for (const { bundleId, startMs, endMs } of sessionsFromEvents(events, maxSessionMs)) {
+		let cursor = startMs;
+		while (cursor < endMs) {
+			const { date, msIntoDay } = parts(cursor);
+			const hour = Math.floor(msIntoDay / HOUR_MS);
+			const hourEnd = cursor + (HOUR_MS - (msIntoDay % HOUR_MS));
+			const sliceEnd = Math.min(endMs, hourEnd);
+			const key = `${date}|${hour}|${bundleId}`;
+			totals.set(key, (totals.get(key) ?? 0) + (sliceEnd - cursor));
+			cursor = sliceEnd;
+		}
+	}
+
+	return [...totals.entries()]
+		.map(([key, ms]) => {
+			const [date, hour, bundleId] = key.split('|');
+			return { date, hour: Number(hour), bundleId, seconds: Math.round(ms / 1000) };
+		})
+		.sort(
+			(a, b) =>
+				a.date.localeCompare(b.date) || a.hour - b.hour || a.bundleId.localeCompare(b.bundleId)
+		);
 }
 
 export interface UsageSession {

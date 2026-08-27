@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveDailyUsage } from './intervals';
+import { deriveDailyUsage, deriveHourlyUsage } from './intervals';
 import type { FocusEvent } from './infocus';
 
 const TZ = 'America/New_York';
@@ -92,5 +92,38 @@ describe('deriveDailyUsage', () => {
 		];
 		const usage = deriveDailyUsage([...events, ...events, events[0]], { timeZone: TZ });
 		expect(usage).toEqual([{ date: '2026-01-05', bundleId: 'com.example.a', seconds: 30 }]);
+	});
+});
+
+describe('deriveHourlyUsage', () => {
+	it('slices sessions into per-hour buckets in the target time zone', () => {
+		// 14:30-16:15 UTC = 09:30-11:15 New York (EST, UTC-5)
+		const usage = deriveHourlyUsage(
+			[
+				ev('2026-01-05T14:30:00Z', 'com.example.a', true),
+				ev('2026-01-05T16:15:00Z', 'com.example.a', false)
+			],
+			{ timeZone: TZ }
+		);
+		expect(usage).toEqual([
+			{ date: '2026-01-05', hour: 9, bundleId: 'com.example.a', seconds: 1800 },
+			{ date: '2026-01-05', hour: 10, bundleId: 'com.example.a', seconds: 3600 },
+			{ date: '2026-01-05', hour: 11, bundleId: 'com.example.a', seconds: 900 }
+		]);
+	});
+
+	it('crosses local midnight into the next date', () => {
+		// 04:30-05:30 UTC = 23:30-00:30 New York
+		const usage = deriveHourlyUsage(
+			[
+				ev('2026-01-05T04:30:00Z', 'com.example.a', true),
+				ev('2026-01-05T05:30:00Z', 'com.example.a', false)
+			],
+			{ timeZone: TZ }
+		);
+		expect(usage).toEqual([
+			{ date: '2026-01-04', hour: 23, bundleId: 'com.example.a', seconds: 1800 },
+			{ date: '2026-01-05', hour: 0, bundleId: 'com.example.a', seconds: 1800 }
+		]);
 	});
 });

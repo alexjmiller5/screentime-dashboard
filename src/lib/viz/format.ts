@@ -67,18 +67,6 @@ export function appName(bundleId: string): string {
 	return segment.length > 0 ? segment.charAt(0).toUpperCase() + segment.slice(1) : bundleId;
 }
 
-const TERM_LABELS: Record<string, string> = {
-	youtube: 'YouTube',
-	instagram: 'Instagram',
-	tiktok: 'TikTok',
-	whatsapp: 'WhatsApp'
-};
-
-/** Watchlist term -> display label. */
-export function termLabel(term: string): string {
-	return TERM_LABELS[term.toLowerCase()] ?? term.charAt(0).toUpperCase() + term.slice(1);
-}
-
 export function formatDuration(seconds: number): string {
 	const minutes = Math.round(seconds / 60);
 	const h = Math.floor(minutes / 60);
