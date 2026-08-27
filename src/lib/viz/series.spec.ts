@@ -6,7 +6,8 @@ import {
 	dateRange,
 	rollingMean,
 	watchlistDaily,
-	electUsage
+	electUsage,
+	combineUsage
 } from './series';
 import type { UsageRow } from '../data/cache';
 import { appName } from './format';
@@ -65,6 +66,41 @@ describe('dailyByApp', () => {
 		expect(dailyByApp([], 5)).toEqual({ dates: [], series: [] });
 	});
 
+	it('reports each day of top Other constituents so the fold stays inspectable', () => {
+		const { series, otherTop } = dailyByApp(
+			[
+				row('2026-01-01', 'com.a', 100),
+				row('2026-01-01', 'com.b', 90),
+				row('2026-01-01', 'com.c', 30),
+				row('2026-01-01', 'com.d', 20),
+				row('2026-01-02', 'com.a', 100)
+			],
+			2 // com.a + com.b named; c and d fold
+		);
+		expect(series.map((s) => s.key)).toEqual(['com.a', 'com.b', 'Other']);
+		expect(otherTop?.[0]).toEqual([
+			{ key: 'com.c', seconds: 30 },
+			{ key: 'com.d', seconds: 20 }
+		]);
+		expect(otherTop?.[1]).toEqual([]);
+	});
+
+	it('uses explicitly picked keys as the named series when provided', () => {
+		const { series } = dailyByApp(
+			[
+				row('2026-01-01', 'com.a', 100),
+				row('2026-01-01', 'com.b', 90),
+				row('2026-01-01', 'com.c', 5)
+			],
+			8,
+			(b) => b,
+			['com.c'] // picked despite being smallest
+		);
+		expect(series.map((s) => s.key)).toEqual(['com.c', 'Other']);
+		expect(series[0].data).toEqual([5]);
+		expect(series[1].data).toEqual([190]);
+	});
+
 	it('merges bundles sharing an app identity when keyed by display name', () => {
 		const { series } = dailyByApp(
 			[
@@ -116,6 +152,32 @@ describe('watchlistDaily', () => {
 			['youtube']
 		);
 		expect(result.series).toEqual([{ key: 'youtube', data: [300] }]);
+	});
+});
+
+describe('combineUsage', () => {
+	it('replaces browser time with its domains, keeping only the residual', () => {
+		const apps = [
+			row('2026-01-05', 'com.mitchellh.ghostty', 200),
+			row('2026-01-05', 'com.google.chrome.ios', 100)
+		];
+		const webs = [row('2026-01-05', 'web:movies.test', 80)];
+		expect(combineUsage(apps, webs)).toEqual([
+			row('2026-01-05', 'com.mitchellh.ghostty', 200),
+			row('2026-01-05', 'com.google.chrome.ios', 20), // 100 - 80 attributed to domains
+			row('2026-01-05', 'web:movies.test', 80)
+		]);
+	});
+
+	it('drops the browser entirely when domains cover it', () => {
+		const apps = [row('2026-01-05', 'com.google.chrome.ios', 50)];
+		const webs = [row('2026-01-05', 'web:movies.test', 70)];
+		expect(combineUsage(apps, webs)).toEqual([row('2026-01-05', 'web:movies.test', 70)]);
+	});
+
+	it('passes apps through when a day has no web data (Screen Time gaps)', () => {
+		const apps = [row('2026-01-06', 'com.google.chrome.ios', 100)];
+		expect(combineUsage(apps, [])).toEqual(apps);
 	});
 });
 

@@ -129,7 +129,19 @@
 						padding: 10,
 						callbacks: {
 							label: (item) =>
-								`${item.dataset.label}: ${formatDuration((item.parsed.y ?? 0) * 3600)}`
+								`${item.dataset.label}: ${formatDuration((item.parsed.y ?? 0) * 3600)}`,
+							// The Other fold stays inspectable: hovering a day appends its
+							// largest folded constituents.
+							afterBody: (items) => {
+								const other = items.find((i) => i.dataset.label === 'Other');
+								const detail = other && data.otherTop?.[other.dataIndex];
+								if (!detail || detail.length === 0) return [];
+								return [
+									'',
+									'Other:',
+									...detail.map((o) => `  ${o.key}: ${formatDuration(o.seconds)}`)
+								];
+							}
 						}
 					}
 				}

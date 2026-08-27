@@ -34,6 +34,9 @@ export function dateRange(start: string, end: string): string[] {
 export interface StackedSeries {
 	dates: string[];
 	series: { key: string; data: number[] }[];
+	/** Per date (aligned with `dates`): the largest constituents folded into
+	 * "Other" that day, so the gray segment stays inspectable. */
+	otherTop?: { key: string; seconds: number }[][];
 }
 
 function axis(rows: UsageRow[]): string[] {
@@ -54,24 +57,38 @@ function axis(rows: UsageRow[]): string[] {
 export function dailyByApp(
 	rows: UsageRow[],
 	topN: number,
-	keyOf: (bundleId: string) => string = (b) => b
+	keyOf: (bundleId: string) => string = (b) => b,
+	pickKeys?: string[]
 ): StackedSeries {
 	const dates = axis(rows);
 	if (dates.length === 0) return { dates: [], series: [] };
 	const index = new Map(dates.map((d, i) => [d, i]));
 
-	const keys = topApps(rows, topN, keyOf).map((t) => t.bundleId);
+	const keys =
+		pickKeys && pickKeys.length > 0 ? pickKeys : topApps(rows, topN, keyOf).map((t) => t.bundleId);
 	const keySet = new Set(keys);
 	const series = [...keys, 'Other'].map((key) => ({ key, data: dates.map(() => 0) }));
 	const byKey = new Map(series.map((s) => [s.key, s.data]));
+	const otherByDay: Map<string, number>[] = dates.map(() => new Map());
 	let hasOther = false;
 	for (const r of rows) {
 		const mapped = keyOf(r.bundleId);
-		const key = keySet.has(mapped) ? mapped : 'Other';
-		if (key === 'Other') hasOther = true;
-		byKey.get(key)![index.get(r.date)!] += r.seconds;
+		const day = index.get(r.date)!;
+		if (keySet.has(mapped)) {
+			byKey.get(mapped)![day] += r.seconds;
+		} else {
+			hasOther = true;
+			byKey.get('Other')![day] += r.seconds;
+			otherByDay[day].set(mapped, (otherByDay[day].get(mapped) ?? 0) + r.seconds);
+		}
 	}
-	return { dates, series: hasOther ? series : series.slice(0, -1) };
+	const otherTop = otherByDay.map((m) =>
+		[...m.entries()]
+			.map(([key, seconds]) => ({ key, seconds }))
+			.sort((a, b) => b.seconds - a.seconds)
+			.slice(0, 5)
+	);
+	return { dates, series: hasOther ? series : series.slice(0, -1), otherTop };
 }
 
 /** Ranked totals; `bundleId` in the result is the grouped key from `keyOf`. */
@@ -136,6 +153,50 @@ export function electUsage(
 		),
 		webs
 	};
+}
+
+const BROWSERS = new Set([
+	'com.google.chrome',
+	'com.google.chrome.ios',
+	'com.apple.safari',
+	'com.apple.mobilesafari',
+	'org.mozilla.firefox'
+]);
+
+/**
+ * One honest combined stack of apps AND websites: website time happens
+ * INSIDE browsers, so per (device, day) browsers are scaled down to just the
+ * residual not attributed to tracked domains, and the domains stand as
+ * first-class series. Non-browser apps pass through. (Domains reported by
+ * WKWebView apps - not browsers - can still slightly double-count their host
+ * app; small and accepted.)
+ */
+export function combineUsage(apps: UsageRow[], webs: UsageRow[]): UsageRow[] {
+	const webTotal = new Map<string, number>();
+	for (const r of webs) {
+		const key = `${r.device}|${r.date}`;
+		webTotal.set(key, (webTotal.get(key) ?? 0) + r.seconds);
+	}
+	const browserTotal = new Map<string, number>();
+	for (const r of apps) {
+		if (!BROWSERS.has(r.bundleId.toLowerCase())) continue;
+		const key = `${r.device}|${r.date}`;
+		browserTotal.set(key, (browserTotal.get(key) ?? 0) + r.seconds);
+	}
+
+	const out: UsageRow[] = [];
+	for (const r of apps) {
+		if (!BROWSERS.has(r.bundleId.toLowerCase())) {
+			out.push(r);
+			continue;
+		}
+		const key = `${r.device}|${r.date}`;
+		const total = browserTotal.get(key)!;
+		const covered = Math.min(webTotal.get(key) ?? 0, total);
+		const residual = Math.round(r.seconds * ((total - covered) / total));
+		if (residual > 0) out.push({ ...r, seconds: residual });
+	}
+	return [...out, ...webs];
 }
 
 /** True when a bundle counts toward a watchlist term: matches the bundle id
