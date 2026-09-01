@@ -56,9 +56,28 @@
 	let picked = $state<string[]>([]);
 	let showTable = $state(false);
 
+	// All filter selections persist across reloads (like the burndown chart).
+	// A stored PRESET is a rule - it re-anchors to the fresh data bounds via
+	// the preset effect below; a stored Custom range restores its literal dates.
+	const PREFS_KEY = 'screentime:prefs';
 	onMount(async () => {
 		try {
-			picked = JSON.parse(localStorage.getItem('screentime:picked2') ?? '') ?? [];
+			const p = JSON.parse(localStorage.getItem(PREFS_KEY) ?? '') as {
+				preset?: string;
+				dateStart?: string;
+				dateEnd?: string;
+				bucket?: Bucket;
+				excludedDevices?: string[];
+				picked?: string[];
+			};
+			picked = p.picked ?? [];
+			bucket = p.bucket ?? 'day';
+			excludedDevices = p.excludedDevices ?? [];
+			activePreset = p.preset ?? '90D';
+			if (p.preset === '' && p.dateStart && p.dateEnd) {
+				dateStart = p.dateStart;
+				dateEnd = p.dateEnd;
+			}
 		} catch {
 			/* first run */
 		}
@@ -67,7 +86,12 @@
 		loading = false;
 	});
 
-	$effect(() => localStorage.setItem('screentime:picked2', JSON.stringify(picked)));
+	$effect(() =>
+		localStorage.setItem(
+			PREFS_KEY,
+			JSON.stringify({ preset: activePreset, dateStart, dateEnd, bucket, excludedDevices, picked })
+		)
+	);
 
 	const deviceLabel = (id: string): string => cache?.devices[id] ?? id.slice(0, 8);
 
@@ -117,6 +141,11 @@
 		dateStart = start;
 		dateEnd = end;
 	}
+
+	// A restored Custom range can fall outside fresh data bounds (the backup
+	// window slides weekly) - clamp what the slider displays.
+	const sliderStart = $derived(!dateStart || dateStart < bounds.min ? bounds.min : dateStart);
+	const sliderEnd = $derived(!dateEnd || dateEnd > bounds.max ? bounds.max : dateEnd);
 
 	const rows = $derived(
 		filterRows(sourceRows, {
@@ -299,8 +328,8 @@
 				<RangeSlider
 					min={bounds.min}
 					max={bounds.max}
-					start={dateStart || bounds.min}
-					end={dateEnd || bounds.max}
+					start={sliderStart}
+					end={sliderEnd}
 					onchange={handleSliderChange}
 				/>
 			</div>
