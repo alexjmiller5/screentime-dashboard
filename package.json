@@ -45,6 +45,8 @@
 	},
 	"dependencies": {
 		"chart.js": "^4.5.1",
+		"chartjs-adapter-dayjs-4": "^1.0.4",
+		"dayjs": "^1.11.23",
 		"sql.js": "^1.14.2"
 	}
 }

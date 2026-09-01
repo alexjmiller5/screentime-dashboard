@@ -6,7 +6,7 @@ import {
 	dateRange,
 	electUsage,
 	combineUsage,
-	dayGridCells
+	bucketize
 } from './series';
 import type { UsageRow } from '../data/cache';
 import { appName } from './format';
@@ -52,52 +52,31 @@ describe('dateRange', () => {
 });
 
 describe('dailyByApp', () => {
-	it('builds top-N stacked series over a continuous date axis, folding the tail into Other', () => {
-		const { dates, series } = dailyByApp(filterRows(rows, { source: 'infocus' }), 2);
+	it('gives EVERY app its own series, largest total first - no Other fold', () => {
+		const { dates, series } = dailyByApp(filterRows(rows, { source: 'infocus' }));
 		expect(dates).toEqual(['2026-01-01', '2026-01-02']);
-		expect(series.map((s) => s.key)).toEqual(['com.a', 'com.b', 'Other']);
+		expect(series.map((s) => s.key)).toEqual(['com.a', 'com.b', 'com.c']);
 		expect(series[0].data).toEqual([100, 200]);
 		expect(series[1].data).toEqual([50, 0]);
-		expect(series[2].data).toEqual([0, 10]); // com.c folded
+		expect(series[2].data).toEqual([0, 10]);
 	});
 
 	it('returns empty for no rows', () => {
-		expect(dailyByApp([], 5)).toEqual({ dates: [], series: [] });
+		expect(dailyByApp([])).toEqual({ dates: [], series: [] });
 	});
 
-	it('reports each day of top Other constituents so the fold stays inspectable', () => {
-		const { series, otherTop } = dailyByApp(
-			[
-				row('2026-01-01', 'com.a', 100),
-				row('2026-01-01', 'com.b', 90),
-				row('2026-01-01', 'com.c', 30),
-				row('2026-01-01', 'com.d', 20),
-				row('2026-01-02', 'com.a', 100)
-			],
-			2 // com.a + com.b named; c and d fold
-		);
-		expect(series.map((s) => s.key)).toEqual(['com.a', 'com.b', 'Other']);
-		expect(otherTop?.[0]).toEqual([
-			{ key: 'com.c', seconds: 30 },
-			{ key: 'com.d', seconds: 20 }
-		]);
-		expect(otherTop?.[1]).toEqual([]);
-	});
-
-	it('uses explicitly picked keys as the named series when provided', () => {
+	it('shows ONLY explicitly picked keys when picks are active', () => {
 		const { series } = dailyByApp(
 			[
 				row('2026-01-01', 'com.a', 100),
 				row('2026-01-01', 'com.b', 90),
 				row('2026-01-01', 'com.c', 5)
 			],
-			8,
 			(b) => b,
 			['com.c'] // picked despite being smallest
 		);
-		expect(series.map((s) => s.key)).toEqual(['com.c', 'Other']);
+		expect(series.map((s) => s.key)).toEqual(['com.c']);
 		expect(series[0].data).toEqual([5]);
-		expect(series[1].data).toEqual([190]);
 	});
 
 	it('merges bundles sharing an app identity when keyed by display name', () => {
@@ -106,7 +85,6 @@ describe('dailyByApp', () => {
 				row('2026-01-01', 'com.google.Chrome', 100), // Biome desktop id
 				row('2026-01-01', 'com.google.chrome.ios', 50) // Screen Time unified id
 			],
-			5,
 			appName
 		);
 		expect(series).toEqual([{ key: 'Chrome', data: [150] }]);
@@ -116,9 +94,22 @@ describe('dailyByApp', () => {
 describe('topApps', () => {
 	it('ranks bundles by total seconds', () => {
 		expect(topApps(filterRows(rows, { source: 'infocus' }), 2)).toEqual([
-			{ bundleId: 'com.a', seconds: 300 },
-			{ bundleId: 'com.b', seconds: 50 }
+			{ bundleId: 'com.a', seconds: 300, raw: 'com.a' },
+			{ bundleId: 'com.b', seconds: 50, raw: 'com.b' }
 		]);
+	});
+
+	it('carries the biggest raw bundle id of each grouped identity', () => {
+		expect(
+			topApps(
+				[
+					row('2026-01-01', 'com.google.Chrome', 100),
+					row('2026-01-01', 'com.google.chrome.ios', 150)
+				],
+				5,
+				appName
+			)
+		).toEqual([{ bundleId: 'Chrome', seconds: 250, raw: 'com.google.chrome.ios' }]);
 	});
 });
 
@@ -180,26 +171,31 @@ describe('electUsage', () => {
 	});
 });
 
-describe('dayGridCells', () => {
-	it('builds a [date][hour] matrix of dominant app + hour total + top constituents', () => {
-		const cells = dayGridCells(
-			[
-				{ device: 'p', date: '2026-01-05', hour: 9, bundleId: 'com.a', seconds: 1800 },
-				{ device: 'p', date: '2026-01-05', hour: 9, bundleId: 'com.b', seconds: 600 },
-				{ device: 'p', date: '2026-01-06', hour: 22, bundleId: 'com.b', seconds: 300 }
-			],
-			['2026-01-05', '2026-01-06'],
-			(b) => b
-		);
-		expect(cells[0][9]).toEqual({
-			key: 'com.a',
-			seconds: 2400,
-			top: [
-				{ key: 'com.a', seconds: 1800 },
-				{ key: 'com.b', seconds: 600 }
-			]
-		});
-		expect(cells[0][22]).toBeNull();
-		expect(cells[1][22]?.key).toBe('com.b');
+describe('bucketize', () => {
+	const daily = {
+		// Thu 2026-01-01 .. Wed 2026-01-07 spans two Monday-anchored weeks
+		dates: dateRange('2026-01-01', '2026-01-07'),
+		series: [{ key: 'com.a', data: [7000, 0, 0, 0, 3000, 3000, 3000] }]
+	};
+
+	it('day passes through unchanged', () => {
+		expect(bucketize(daily, 'day')).toBe(daily);
+	});
+
+	it('week buckets to Monday labels with per-day averages over covered days', () => {
+		const { dates, series } = bucketize(daily, 'week');
+		// Jan 1-4 belong to the week of Mon Dec 29; Jan 5-7 to Mon Jan 5
+		expect(dates).toEqual(['2025-12-29', '2026-01-05']);
+		expect(series[0].data).toEqual([7000 / 4, 9000 / 3]);
+	});
+
+	it('month buckets to YYYY-MM with per-day averages', () => {
+		const twoMonths = {
+			dates: dateRange('2026-01-30', '2026-02-02'),
+			series: [{ key: 'com.a', data: [100, 300, 500, 700] }]
+		};
+		const { dates, series } = bucketize(twoMonths, 'month');
+		expect(dates).toEqual(['2026-01', '2026-02']);
+		expect(series[0].data).toEqual([200, 600]);
 	});
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appName, formatDuration } from './format';
+import { appName, appColor, appIcon, paletteIndex, formatDuration } from './format';
 
 describe('appName', () => {
 	it('prettifies known bundles and falls back to the last segment', () => {
@@ -26,6 +26,36 @@ describe('appName', () => {
 
 	it('renders web-domain keys as the bare domain', () => {
 		expect(appName('web:movies.example.test')).toBe('movies.example.test');
+	});
+});
+
+describe('app identity visuals', () => {
+	it('returns the brand color for known apps, their domains, and PWAs', () => {
+		expect(appColor('YouTube')).toBe('#FF0000');
+		expect(appColor('youtube.com')).toBe('#FF0000'); // same identity via the domain
+		expect(appColor('Instagram (PWA)')).toBe('#E4405F');
+		expect(appColor('SomeRandomApp')).toBeNull();
+	});
+
+	it('never returns pure black (invisible on the dark surface)', () => {
+		for (const key of ['Notion', 'X', 'TikTok']) {
+			expect(appColor(key)).not.toBeNull();
+			expect(appColor(key)).not.toBe('#000000');
+		}
+	});
+
+	it('returns an icon URL for known apps and a favicon for unknown domains', () => {
+		expect(appIcon('YouTube')).toContain('selfhst:youtube');
+		expect(appIcon('Messages')).toContain('tabler:'); // Apple apps: tinted glyphs
+		expect(appIcon('obscure-site.example')).toContain('obscure-site.example');
+		expect(appIcon('SomeRandomApp')).toBeNull();
+	});
+
+	it('hashes unknown keys to a stable palette slot 0-7', () => {
+		const i = paletteIndex('SomeRandomApp');
+		expect(i).toBe(paletteIndex('SomeRandomApp'));
+		expect(i).toBeGreaterThanOrEqual(0);
+		expect(i).toBeLessThan(8);
 	});
 });
 

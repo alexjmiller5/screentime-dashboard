@@ -2,7 +2,8 @@
 // The sources are parallel measurements of the SAME minutes and are never
 // summed together - electUsage picks the best one per (device label, day).
 
-import type { UsageRow, HourlyRow } from '../data/cache';
+import type { UsageRow } from '../data/cache';
+import { addDays } from './presets';
 
 export interface RowFilter {
 	source?: UsageRow['source'];
@@ -33,9 +34,49 @@ export function dateRange(start: string, end: string): string[] {
 export interface StackedSeries {
 	dates: string[];
 	series: { key: string; data: number[] }[];
-	/** Per date (aligned with `dates`): the largest constituents folded into
-	 * "Other" that day, so the gray segment stays inspectable. */
-	otherTop?: { key: string; seconds: number }[][];
+}
+
+export type Bucket = 'day' | 'week' | 'month';
+
+/** Bucket label, mirroring notion-task-burndown-chart: weeks anchor on their
+ * Monday (a real date), months on 'YYYY-MM'. */
+function bucketLabel(date: string, bucket: Bucket): string {
+	if (bucket === 'day') return date;
+	if (bucket === 'month') return date.slice(0, 7);
+	const [y, m, d] = date.split('-').map(Number);
+	const weekday = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0 = Sunday
+	return addDays(date, -((weekday + 6) % 7));
+}
+
+/** Re-bucket a daily stacked series into week/month buckets holding the
+ * AVERAGE seconds per day - edge buckets divide by the days the range
+ * actually covers, so partial weeks/months stay honest. 'day' passes
+ * through untouched. */
+export function bucketize(s: StackedSeries, bucket: Bucket): StackedSeries {
+	if (bucket === 'day') return s;
+	const labels: string[] = [];
+	const indexOf = new Map<string, number>();
+	const dayCounts: number[] = [];
+	const dateBucket = s.dates.map((d) => {
+		const label = bucketLabel(d, bucket);
+		let i = indexOf.get(label);
+		if (i === undefined) {
+			i = labels.length;
+			labels.push(label);
+			indexOf.set(label, i);
+			dayCounts.push(0);
+		}
+		dayCounts[i]++;
+		return i;
+	});
+	return {
+		dates: labels,
+		series: s.series.map(({ key, data }) => {
+			const sums = labels.map(() => 0);
+			data.forEach((v, di) => (sums[dateBucket[di]] += v));
+			return { key, data: sums.map((v, i) => v / dayCounts[i]) };
+		})
+	};
 }
 
 function axis(rows: UsageRow[]): string[] {
@@ -49,13 +90,13 @@ function axis(rows: UsageRow[]): string[] {
 	return dateRange(min, max);
 }
 
-/** Top-N apps as stacked daily series, remaining bundles folded into "Other".
- * `keyOf` groups bundles into chart identities (pass appName so the same app
- * recorded under different platform ids - Chrome desktop vs Apple's unified
- * .ios id - becomes ONE series). */
+/** Daily stacked series per app identity, largest total first - EVERY app is
+ * its own series, nothing folds into an "Other". Explicit `pickKeys` act as a
+ * filter: only those keys are kept. `keyOf` groups bundles into chart
+ * identities (pass appName so the same app recorded under different platform
+ * ids - Chrome desktop vs Apple's unified .ios id - becomes ONE series). */
 export function dailyByApp(
 	rows: UsageRow[],
-	topN: number,
 	keyOf: (bundleId: string) => string = (b) => b,
 	pickKeys?: string[]
 ): StackedSeries {
@@ -64,45 +105,42 @@ export function dailyByApp(
 	const index = new Map(dates.map((d, i) => [d, i]));
 
 	const keys =
-		pickKeys && pickKeys.length > 0 ? pickKeys : topApps(rows, topN, keyOf).map((t) => t.bundleId);
-	const keySet = new Set(keys);
-	const series = [...keys, 'Other'].map((key) => ({ key, data: dates.map(() => 0) }));
-	const byKey = new Map(series.map((s) => [s.key, s.data]));
-	const otherByDay: Map<string, number>[] = dates.map(() => new Map());
-	let hasOther = false;
+		pickKeys !== undefined && pickKeys.length > 0
+			? pickKeys
+			: topApps(rows, Infinity, keyOf).map((t) => t.bundleId);
+	const byKey = new Map(keys.map((k) => [k, dates.map(() => 0)]));
 	for (const r of rows) {
-		const mapped = keyOf(r.bundleId);
-		const day = index.get(r.date)!;
-		if (keySet.has(mapped)) {
-			byKey.get(mapped)![day] += r.seconds;
-		} else {
-			hasOther = true;
-			byKey.get('Other')![day] += r.seconds;
-			otherByDay[day].set(mapped, (otherByDay[day].get(mapped) ?? 0) + r.seconds);
-		}
+		const data = byKey.get(keyOf(r.bundleId));
+		if (data) data[index.get(r.date)!] += r.seconds;
 	}
-	const otherTop = otherByDay.map((m) =>
-		[...m.entries()]
-			.map(([key, seconds]) => ({ key, seconds }))
-			.sort((a, b) => b.seconds - a.seconds)
-			.slice(0, 5)
-	);
-	return { dates, series: hasOther ? series : series.slice(0, -1), otherTop };
+	return { dates, series: keys.map((key) => ({ key, data: byKey.get(key)! })) };
 }
 
-/** Ranked totals; `bundleId` in the result is the grouped key from `keyOf`. */
+/** Ranked totals; `bundleId` in the result is the grouped key from `keyOf`,
+ * `raw` the group's biggest underlying bundle id (for App Store icon lookup). */
 export function topApps(
 	rows: UsageRow[],
 	n: number,
 	keyOf: (bundleId: string) => string = (b) => b
-): { bundleId: string; seconds: number }[] {
-	const totals = new Map<string, number>();
+): { bundleId: string; seconds: number; raw: string }[] {
+	const groups = new Map<string, Map<string, number>>();
 	for (const r of rows) {
 		const key = keyOf(r.bundleId);
-		totals.set(key, (totals.get(key) ?? 0) + r.seconds);
+		let group = groups.get(key);
+		if (!group) groups.set(key, (group = new Map()));
+		group.set(r.bundleId, (group.get(r.bundleId) ?? 0) + r.seconds);
 	}
-	return [...totals.entries()]
-		.map(([bundleId, seconds]) => ({ bundleId, seconds }))
+	return [...groups.entries()]
+		.map(([bundleId, byRaw]) => {
+			let seconds = 0;
+			let raw = bundleId;
+			let best = -1;
+			for (const [b, s] of byRaw) {
+				seconds += s;
+				if (s > best) [best, raw] = [s, b];
+			}
+			return { bundleId, seconds, raw };
+		})
 		.sort((a, b) => b.seconds - a.seconds || a.bundleId.localeCompare(b.bundleId))
 		.slice(0, n);
 }
@@ -184,46 +222,4 @@ export function combineUsage(apps: UsageRow[], webs: UsageRow[]): UsageRow[] {
 		if (residual > 0) out.push({ ...r, seconds: residual });
 	}
 	return [...out, ...webs];
-}
-
-export interface DayGridCell {
-	/** Dominant app identity for the hour. */
-	key: string;
-	/** Total usage seconds in the hour, all apps. */
-	seconds: number;
-	/** Largest constituents, for the tooltip. */
-	top: { key: string; seconds: number }[];
-}
-
-/** [dateIndex][hour 0-23] matrix for the day-rhythm grid; null = no usage. */
-export function dayGridCells(
-	hourly: HourlyRow[],
-	dates: string[],
-	keyOf: (bundleId: string) => string
-): (DayGridCell | null)[][] {
-	const dateIndex = new Map(dates.map((d, i) => [d, i]));
-	const buckets: (Map<string, number> | null)[][] = dates.map(() =>
-		Array.from({ length: 24 }, () => null)
-	);
-	for (const r of hourly) {
-		const di = dateIndex.get(r.date);
-		if (di === undefined) continue;
-		const bucket = (buckets[di][r.hour] ??= new Map());
-		const key = keyOf(r.bundleId);
-		bucket.set(key, (bucket.get(key) ?? 0) + r.seconds);
-	}
-	return buckets.map((day) =>
-		day.map((bucket) => {
-			if (!bucket) return null;
-			const top = [...bucket.entries()]
-				.map(([key, seconds]) => ({ key, seconds }))
-				.sort((a, b) => b.seconds - a.seconds)
-				.slice(0, 3);
-			return {
-				key: top[0].key,
-				seconds: [...bucket.values()].reduce((a, b) => a + b, 0),
-				top
-			};
-		})
-	);
 }

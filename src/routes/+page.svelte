@@ -4,18 +4,26 @@
 		IconFolderOpen,
 		IconTable,
 		IconChartBar,
-		IconAdjustmentsHorizontal
+		IconAdjustmentsHorizontal,
+		IconApps,
+		IconCalendarWeek,
+		IconCalendarStats,
+		IconChevronDown,
+		IconDevices,
+		IconDeviceDesktop,
+		IconDeviceLaptop,
+		IconDeviceMobile
 	} from '@tabler/icons-svelte';
+	import { iconUrl } from '$lib/viz/icons.svelte';
+	import RangeSlider from '$lib/components/RangeSlider.svelte';
+	import { PRESET_LABELS, getPresetRange, type PresetLabel } from '$lib/viz/presets';
 	import Seo from '$lib/components/seo.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import * as Select from '$lib/components/ui/select';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import StackedChart from '$lib/components/StackedChart.svelte';
-	import StatTile from '$lib/components/StatTile.svelte';
-	import TopAppsList from '$lib/components/TopAppsList.svelte';
 	import DataTable from '$lib/components/DataTable.svelte';
 	import ImportDialog from '$lib/components/ImportDialog.svelte';
-	import DayGrid from '$lib/components/DayGrid.svelte';
 	import type { UsageCache } from '$lib/data/cache';
 	import type { ImportResult } from '$lib/import/importer';
 	import {
@@ -24,7 +32,8 @@
 		topApps,
 		electUsage,
 		combineUsage,
-		dayGridCells
+		bucketize,
+		type Bucket
 	} from '$lib/viz/series';
 	import { appName, formatDuration } from '$lib/viz/format';
 
@@ -35,23 +44,21 @@
 	let importError = $state('');
 	let scan = $state<ImportResult | null>(null);
 
-	let rangeDays = $state('90');
-	// Apps and websites are parallel breakdowns of the same minutes. Combined
-	// swaps browsers for their domains (no double counting); the pure views
-	// show one breakdown at a time.
-	let view = $state<'combined' | 'apps' | 'websites'>('combined');
+	// Date range: a preset RULE ('90D'...) or '' = Custom, set by touching the
+	// slider directly - same interplay as notion-task-burndown-chart.
+	let activePreset = $state<string>('90D');
+	let dateStart = $state('');
+	let dateEnd = $state('');
 	let excludedDevices: string[] = $state([]);
-	// Explicitly picked chart series per view (empty = auto top-8).
-	let picked = $state<{ combined: string[]; apps: string[]; websites: string[] }>({
-		combined: [],
-		apps: [],
-		websites: []
-	});
+	// Time bucket: week/month bars show AVERAGE daily usage per bucket.
+	let bucket = $state<Bucket>('day');
+	// Explicitly picked chart series (empty = every app).
+	let picked = $state<string[]>([]);
 	let showTable = $state(false);
 
 	onMount(async () => {
 		try {
-			picked = JSON.parse(localStorage.getItem('screentime:picked') ?? '') ?? picked;
+			picked = JSON.parse(localStorage.getItem('screentime:picked2') ?? '') ?? [];
 		} catch {
 			/* first run */
 		}
@@ -60,7 +67,7 @@
 		loading = false;
 	});
 
-	$effect(() => localStorage.setItem('screentime:picked', JSON.stringify(picked)));
+	$effect(() => localStorage.setItem('screentime:picked2', JSON.stringify(picked)));
 
 	const deviceLabel = (id: string): string => cache?.devices[id] ?? id.slice(0, 8);
 
@@ -70,49 +77,73 @@
 	const deviceLabels = $derived(
 		[...new Set([...elected.apps, ...elected.webs].map((r) => deviceLabel(r.device)))].sort()
 	);
+	const selectedDevices = $derived(deviceLabels.filter((l) => !excludedDevices.includes(l)));
+	const deviceIcon = (label: string): typeof IconDeviceDesktop =>
+		/iphone|phone|ios/i.test(label)
+			? IconDeviceMobile
+			: /book|laptop|air/i.test(label)
+				? IconDeviceLaptop
+				: IconDeviceDesktop;
 	const byDevice = (rs: typeof elected.apps): typeof elected.apps =>
 		rs.filter((r) => !excludedDevices.includes(deviceLabel(r.device)));
 	const appsDev = $derived(byDevice(elected.apps));
 	const websDev = $derived(byDevice(elected.webs));
-	const sourceRows = $derived(
-		view === 'combined' ? combineUsage(appsDev, websDev) : view === 'apps' ? appsDev : websDev
-	);
-	const lastDate = $derived(
-		appsDev.length > 0 ? appsDev.reduce((m, r) => (r.date > m ? r.date : m), '') : ''
-	);
-	const startDate = $derived(
-		rangeDays === 'all' || lastDate === ''
-			? undefined
-			: new Date(Date.parse(lastDate) - (Number(rangeDays) - 1) * 86_400_000)
-					.toISOString()
-					.slice(0, 10)
-	);
-	const rows = $derived(filterRows(sourceRows, { startDate, endDate: lastDate || undefined }));
+	// Apps and websites live in ONE stack: browsers scaled down to the residual
+	// not covered by their tracked domains, so nothing double-counts.
+	const sourceRows = $derived(combineUsage(appsDev, websDev));
+	// Slider bounds: the full extent of the data, before any device filter.
+	const bounds = $derived.by(() => {
+		let min = '';
+		let max = '';
+		for (const r of [...elected.apps, ...elected.webs]) {
+			if (!min || r.date < min) min = r.date;
+			if (r.date > max) max = r.date;
+		}
+		return { min, max };
+	});
 
-	// 8 named series = every validated palette slot; the rest folds to Other in
-	// the chart (picked series override the auto top-8); the ranked list below
-	// shows everything.
-	const stacked = $derived(dailyByApp(rows, 8, appName, picked[view]));
+	// A preset is a rule: it (re)computes the concrete range whenever the data
+	// bounds land or the preset changes. Custom ('') leaves the dates alone.
+	$effect(() => {
+		if (activePreset && bounds.max) {
+			const range = getPresetRange(activePreset as PresetLabel, bounds.min, bounds.max);
+			dateStart = range.start;
+			dateEnd = range.end;
+		}
+	});
+
+	function handleSliderChange(start: string, end: string): void {
+		activePreset = '';
+		dateStart = start;
+		dateEnd = end;
+	}
+
+	const rows = $derived(
+		filterRows(sourceRows, {
+			startDate: dateStart || undefined,
+			endDate: dateEnd || undefined
+		})
+	);
+
+	// Every app is its own series (picks act as a filter).
+	const stacked = $derived(dailyByApp(rows, appName, picked));
+	const bucketed = $derived(bucketize(stacked, bucket));
+	// Overall daily average across EVERYTHING currently filtered (apps picked,
+	// devices, date range), over the days the range spans.
+	const avgPerDay = $derived(
+		stacked.dates.length > 0
+			? rows
+					.filter((r) => picked.length === 0 || picked.includes(appName(r.bundleId)))
+					.reduce((a, r) => a + r.seconds, 0) / stacked.dates.length
+			: 0
+	);
 	const ranked = $derived(topApps(rows, Infinity, appName));
-	// Day-rhythm grid: per-hour focus data, device-filtered, on the chart's axis.
-	const hourlyRows = $derived(
-		(cache?.hourly ?? []).filter(
-			(h) =>
-				!excludedDevices.includes(deviceLabel(h.device)) &&
-				(!startDate || h.date >= startDate) &&
-				(!lastDate || h.date <= lastDate)
-		)
-	);
-	const gridCells = $derived(dayGridCells(hourlyRows, stacked.dates, appName));
-	const namedKeys = $derived(stacked.series.map((s) => s.key).filter((k) => k !== 'Other'));
+	// Display key -> raw bundle id, for App Store icon lookups in the chart.
+	const rawFor = $derived(Object.fromEntries(ranked.map((t) => [t.bundleId, t.raw])));
 
-	const pickCandidates = $derived(ranked.slice(0, 30).map((t) => t.bundleId));
+	const pickCandidates = $derived(ranked.slice(0, 30));
 	function togglePick(key: string): void {
-		const current = picked[view];
-		picked = {
-			...picked,
-			[view]: current.includes(key) ? current.filter((k) => k !== key) : [...current, key]
-		};
+		picked = picked.includes(key) ? picked.filter((k) => k !== key) : [...picked, key];
 	}
 
 	async function startImport(): Promise<void> {
@@ -183,130 +214,123 @@
 	{:else}
 		<!-- filters -->
 		<div class="flex flex-wrap items-center gap-2">
-			<Select.Root type="single" bind:value={rangeDays}>
+			<Select.Root type="single" bind:value={activePreset}>
 				<Select.Trigger>
-					{rangeDays === 'all' ? 'All time' : `Last ${rangeDays} days`}
+					<IconCalendarWeek size={16} class="text-muted-foreground" />
+					{activePreset === '' ? 'Custom' : activePreset}
 				</Select.Trigger>
 				<Select.Content>
-					<Select.Item value="7">Last 7 days</Select.Item>
-					<Select.Item value="30">Last 30 days</Select.Item>
-					<Select.Item value="90">Last 90 days</Select.Item>
-					<Select.Item value="all">All time</Select.Item>
+					{#each PRESET_LABELS as label (label)}
+						<Select.Item value={label} {label} />
+					{/each}
 				</Select.Content>
 			</Select.Root>
 
-			<Select.Root type="single" bind:value={view}>
+			<Select.Root type="single" value={bucket} onValueChange={(v) => (bucket = v as Bucket)}>
 				<Select.Trigger>
-					{view === 'combined'
-						? 'Apps + websites'
-						: view === 'apps'
-							? 'Apps only'
-							: 'Websites only'}
+					<IconCalendarStats size={16} class="text-muted-foreground" />
+					{bucket === 'day' ? 'Daily' : bucket === 'week' ? 'Weekly avg' : 'Monthly avg'}
 				</Select.Trigger>
 				<Select.Content>
-					<Select.Item value="combined">Apps + websites</Select.Item>
-					<Select.Item value="apps">Apps only</Select.Item>
-					<Select.Item value="websites">Websites only</Select.Item>
+					<Select.Item value="day" label="Daily" />
+					<Select.Item value="week" label="Weekly avg" />
+					<Select.Item value="month" label="Monthly avg" />
 				</Select.Content>
 			</Select.Root>
 
 			<DropdownMenu.Root>
 				<DropdownMenu.Trigger>
 					{#snippet child({ props })}
-						<Button {...props} variant="outline" size="sm">
-							<IconAdjustmentsHorizontal size={16} />
-							{picked[view].length === 0 ? 'Series: auto' : `Series: ${picked[view].length} picked`}
+						<Button {...props} variant="outline" size="sm" class="font-normal">
+							<IconAdjustmentsHorizontal size={16} class="text-muted-foreground" />
+							{picked.length === 0
+								? 'Filter apps & sites'
+								: `Showing ${picked.length} app${picked.length === 1 ? '' : 's'}`}
+							<IconChevronDown size={16} class="text-muted-foreground" />
 						</Button>
 					{/snippet}
 				</DropdownMenu.Trigger>
 				<DropdownMenu.Content class="max-h-96 overflow-y-auto">
-					<DropdownMenu.Item
-						onclick={() => (picked = { ...picked, [view]: [] })}
-						disabled={picked[view].length === 0}
-					>
-						Auto (top 8)
-					</DropdownMenu.Item>
-					<DropdownMenu.Separator />
-					{#each pickCandidates as key (key)}
+					{#each pickCandidates as t (t.bundleId)}
+						{@const icon = iconUrl(t.bundleId, t.raw)}
 						<DropdownMenu.CheckboxItem
-							checked={picked[view].includes(key)}
-							disabled={!picked[view].includes(key) && picked[view].length >= 8}
+							checked={picked.includes(t.bundleId)}
 							closeOnSelect={false}
-							onCheckedChange={() => togglePick(key)}
+							onCheckedChange={() => togglePick(t.bundleId)}
 						>
-							{key}
+							{#if icon}
+								<img src={icon} alt="" loading="lazy" class="size-4 rounded-[3px]" />
+							{:else}
+								<IconApps size={16} class="text-muted-foreground" />
+							{/if}
+							{t.bundleId}
 						</DropdownMenu.CheckboxItem>
 					{/each}
 				</DropdownMenu.Content>
 			</DropdownMenu.Root>
 
-			{#each deviceLabels as label (label)}
-				<Button
-					variant="outline"
-					size="sm"
-					class={excludedDevices.includes(label) ? 'opacity-45' : ''}
-					onclick={() =>
-						(excludedDevices = excludedDevices.includes(label)
-							? excludedDevices.filter((d) => d !== label)
-							: [...excludedDevices, label])}
-				>
-					<span
-						class="size-2 rounded-full {excludedDevices.includes(label)
-							? 'bg-muted-foreground'
-							: 'bg-chart-1'}"
-					></span>
-					{label}
-				</Button>
-			{/each}
+			<Select.Root
+				type="multiple"
+				value={selectedDevices}
+				onValueChange={(v) => (excludedDevices = deviceLabels.filter((l) => !v.includes(l)))}
+			>
+				<Select.Trigger>
+					<IconDevices size={16} class="text-muted-foreground" />
+					{selectedDevices.length === deviceLabels.length
+						? 'All devices'
+						: `${selectedDevices.length} of ${deviceLabels.length} devices`}
+				</Select.Trigger>
+				<Select.Content>
+					{#each deviceLabels as label (label)}
+						{@const Icon = deviceIcon(label)}
+						<Select.Item value={label}>
+							<Icon size={16} class="text-muted-foreground" />
+							{label}
+						</Select.Item>
+					{/each}
+				</Select.Content>
+			</Select.Root>
 		</div>
 
-		<div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-			<StatTile
-				label="Daily average (range)"
-				value={formatDuration(
-					stacked.dates.length > 0
-						? rows.reduce((a, r) => a + r.seconds, 0) / stacked.dates.length
-						: 0
-				)}
-			/>
-		</div>
+		<!-- date range slider: mirrors the preset select; dragging it directly
+		     flips the preset to Custom -->
+		{#if bounds.max}
+			<div class="px-1">
+				<RangeSlider
+					min={bounds.min}
+					max={bounds.max}
+					start={dateStart || bounds.min}
+					end={dateEnd || bounds.max}
+					onchange={handleSliderChange}
+				/>
+			</div>
+		{/if}
 
 		<!-- main chart -->
 		<section class="rounded-lg border bg-card p-4 sm:p-6">
 			<div class="mb-3 flex items-center justify-between gap-3">
-				<h2 class="text-sm font-medium">Daily usage by app</h2>
+				<div class="flex items-baseline gap-3">
+					<h2 class="text-sm font-medium">
+						{bucket === 'day'
+							? 'Daily usage by app'
+							: bucket === 'week'
+								? 'Average daily usage by week'
+								: 'Average daily usage by month'}
+					</h2>
+					<span class="text-xs text-muted-foreground tabular-nums">
+						avg {formatDuration(avgPerDay)}/day
+					</span>
+				</div>
 				<Button variant="ghost" size="sm" onclick={() => (showTable = !showTable)}>
 					{#if showTable}<IconChartBar size={16} />Chart{:else}<IconTable size={16} />Table{/if}
 				</Button>
 			</div>
 			{#if showTable}
-				<DataTable data={stacked} />
+				<DataTable data={bucketed} />
 			{:else}
-				<StackedChart data={stacked} kind="stacked-bar" />
+				<StackedChart data={bucketed} kind="stacked-bar" {bucket} {rawFor} />
 			{/if}
 		</section>
-
-		<section class="rounded-lg border bg-card p-4 sm:p-6">
-			<h2 class="mb-1 text-sm font-medium">Day rhythm</h2>
-			<p class="mb-3 text-xs text-muted-foreground">
-				Hour of day × date - each cell is that hour's dominant app, in the chart's colors; blank is
-				screen off. Hover for the hour's breakdown.
-			</p>
-			{#if hourlyRows.length > 0}
-				<DayGrid dates={stacked.dates} cells={gridCells} {namedKeys} />
-			{:else}
-				<p class="py-6 text-center text-sm text-muted-foreground">
-					No per-hour data in this cache yet - run Import backups again to add it.
-				</p>
-			{/if}
-		</section>
-
-		<div class="grid grid-cols-1 gap-6">
-			<section class="rounded-lg border bg-card p-4 sm:p-6">
-				<h2 class="mb-3 text-sm font-medium">Top apps in range</h2>
-				<TopAppsList apps={ranked} />
-			</section>
-		</div>
 
 		<p class="text-xs text-muted-foreground">
 			Last import {new Date(cache.importedAt).toLocaleString()} · time zone {cache.timeZone} · sources

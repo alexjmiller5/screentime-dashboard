@@ -80,9 +80,23 @@ adapter and compiler options live in `vite.config.ts` inside the
   shadcn tokens in `src/routes/layout.css`) - deliberately kept, this project
   is a test of the template's defaults. ALL tokens live in the `@theme` /
   `:root` / `.dark` blocks there; components consume tokens, never raw values.
-- Icons: Tabler ONLY via `@tabler/icons-svelte` - never emojis. shadcn's
-  internal Lucide usage stays.
+- Icons: Tabler ONLY via `@tabler/icons-svelte` for UI chrome - never emojis.
+  shadcn's internal Lucide usage stays. DATA icons (app/site identity) are a
+  separate system: `src/lib/viz/icons.svelte.ts` resolves a display key to
+  the static brand map in `format.ts` (selfhst/Tabler via Iconify URLs),
+  site favicons for domains, then the iTunes lookup API (real App Store
+  artwork by bundle id, batched in 50s, cached in localStorage - misses
+  cached as '').
+- Chart/bar colors are each app's BRAND color (`appColor` in
+  `src/lib/viz/format.ts`, keyed by normalized display name; never emit
+  pure #000 - black brands get a dark-safe gray); unknown apps hash to a
+  stable `--chart-N` token slot (`paletteIndex`), so color follows the
+  entity, never its rank.
 - Charts follow the `dataviz` skill; read it before touching chart code.
+  Chart.js PERF GOTCHA: cost scales with DATASET count, not data volume -
+  past ~30 series StackedChart switches to rank-level floating bars (every
+  app keeps its own segment; datasets = deepest day). Never use `skipNull`
+  on stacked bars (turns stacking quadratic; 451 series took 159s).
 
 ## Site basics
 
