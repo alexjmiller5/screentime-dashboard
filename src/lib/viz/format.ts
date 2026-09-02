@@ -149,6 +149,15 @@ export function paletteIndex(key: string): number {
 	return h % 8;
 }
 
+/** The header readout: a daily rate scaled to the active bucket, so the
+ * number matches the bars ("avg 1h 8m/day" -> "avg 8h/week"). Scaling the
+ * rate (not dividing by bucket count) keeps partial edge buckets from
+ * dragging the average down. */
+export function formatAverage(secondsPerDay: number, bucket: 'day' | 'week' | 'month'): string {
+	const perBucket = { day: 1, week: 7, month: 365.25 / 12 }[bucket];
+	return `avg ${formatDuration(secondsPerDay * perBucket)}/${bucket}`;
+}
+
 export function formatDuration(seconds: number): string {
 	const minutes = Math.round(seconds / 60);
 	const h = Math.floor(minutes / 60);

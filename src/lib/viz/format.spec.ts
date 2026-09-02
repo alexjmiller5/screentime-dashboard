@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appName, appColor, appIcon, paletteIndex, formatDuration } from './format';
+import { appName, appColor, appIcon, paletteIndex, formatDuration, formatAverage } from './format';
 
 describe('appName', () => {
 	it('prettifies known bundles and falls back to the last segment', () => {
@@ -67,5 +67,18 @@ describe('formatDuration', () => {
 		expect(formatDuration(3600)).toBe('1h');
 		expect(formatDuration(5400)).toBe('1h 30m');
 		expect(formatDuration(36000)).toBe('10h');
+	});
+});
+
+describe('formatAverage', () => {
+	it('scales the daily rate to the active bucket', () => {
+		expect(formatAverage(3600, 'day')).toBe('avg 1h/day');
+		expect(formatAverage(3600, 'week')).toBe('avg 7h/week');
+		// 30.44 average days per month
+		expect(formatAverage(3600, 'month')).toBe('avg 30h 26m/month');
+	});
+
+	it('handles zero', () => {
+		expect(formatAverage(0, 'week')).toBe('avg 0m/week');
 	});
 });
