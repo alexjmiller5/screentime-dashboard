@@ -19,6 +19,7 @@
 	import { PRESET_LABELS, getPresetRange, type PresetLabel } from '$lib/viz/presets';
 	import Seo from '$lib/components/seo.svelte';
 	import { Button } from '$lib/components/ui/button';
+	import { Input } from '$lib/components/ui/input';
 	import * as Select from '$lib/components/ui/select';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import StackedChart from '$lib/components/StackedChart.svelte';
@@ -170,7 +171,17 @@
 	// Display key -> raw bundle id, for App Store icon lookups in the chart.
 	const rawFor = $derived(Object.fromEntries(ranked.map((t) => [t.bundleId, t.raw])));
 
-	const pickCandidates = $derived(ranked.slice(0, 30));
+	// Every app in range is selectable; the search box makes the long tail
+	// reachable. Picked entries stay listed even when they don't match, so a
+	// search can never hide what's currently on the chart.
+	let pickQuery = $state('');
+	const pickCandidates = $derived(
+		ranked.filter(
+			(t) =>
+				picked.includes(t.bundleId) ||
+				t.bundleId.toLowerCase().includes(pickQuery.trim().toLowerCase())
+		)
+	);
 	function togglePick(key: string): void {
 		picked = picked.includes(key) ? picked.filter((k) => k !== key) : [...picked, key];
 	}
@@ -279,7 +290,19 @@
 						</Button>
 					{/snippet}
 				</DropdownMenu.Trigger>
-				<DropdownMenu.Content class="max-h-96 overflow-y-auto">
+				<DropdownMenu.Content class="max-h-96 w-64 overflow-y-auto">
+					<div class="sticky top-0 z-10 -mx-1 -mt-1 mb-1 bg-popover px-1 pt-1 pb-1">
+						<Input
+							bind:value={pickQuery}
+							placeholder="Search {ranked.length} apps & sites"
+							class="h-8"
+							onkeydown={(e: KeyboardEvent) => e.stopPropagation()}
+						/>
+					</div>
+					{#if picked.length > 0}
+						<DropdownMenu.Item onclick={() => (picked = [])}>Clear selection</DropdownMenu.Item>
+						<DropdownMenu.Separator />
+					{/if}
 					{#each pickCandidates as t (t.bundleId)}
 						{@const icon = iconUrl(t.bundleId, t.raw)}
 						<DropdownMenu.CheckboxItem
@@ -294,6 +317,8 @@
 							{/if}
 							{t.bundleId}
 						</DropdownMenu.CheckboxItem>
+					{:else}
+						<p class="px-2 py-3 text-center text-sm text-muted-foreground">No matches</p>
 					{/each}
 				</DropdownMenu.Content>
 			</DropdownMenu.Root>
