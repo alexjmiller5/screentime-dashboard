@@ -182,20 +182,20 @@ describe('bucketize', () => {
 		expect(bucketize(daily, 'day')).toBe(daily);
 	});
 
-	it('week buckets to Monday labels with per-day averages over covered days', () => {
+	it('week buckets to Monday labels holding the week TOTAL', () => {
 		const { dates, series } = bucketize(daily, 'week');
 		// Jan 1-4 belong to the week of Mon Dec 29; Jan 5-7 to Mon Jan 5
 		expect(dates).toEqual(['2025-12-29', '2026-01-05']);
-		expect(series[0].data).toEqual([7000 / 4, 9000 / 3]);
+		expect(series[0].data).toEqual([7000, 9000]);
 	});
 
-	it('month buckets to YYYY-MM with per-day averages', () => {
+	it('month buckets to YYYY-MM holding the month TOTAL', () => {
 		const twoMonths = {
 			dates: dateRange('2026-01-30', '2026-02-02'),
 			series: [{ key: 'com.a', data: [100, 300, 500, 700] }]
 		};
 		const { dates, series } = bucketize(twoMonths, 'month');
 		expect(dates).toEqual(['2026-01', '2026-02']);
-		expect(series[0].data).toEqual([200, 600]);
+		expect(series[0].data).toEqual([400, 1200]);
 	});
 });

@@ -319,7 +319,7 @@
 								const day = perDay[i];
 								const total = day.reduce((a, s) => a + s.v, 0);
 								const rest = day.length - 15;
-								const totalLine = `${bucket === 'day' ? 'Total' : 'Avg/day'}: ${formatDuration(total * 3600)}`;
+								const totalLine = `Total: ${formatDuration(total * 3600)}`;
 								return rest > 0 ? `+ ${rest} more\n${totalLine}` : totalLine;
 							},
 							labelColor: (item: { datasetIndex: number; dataIndex: number }) => {
