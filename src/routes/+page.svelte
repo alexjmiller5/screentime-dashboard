@@ -36,7 +36,7 @@
 		bucketize,
 		type Bucket
 	} from '$lib/viz/series';
-	import { appName, formatAverage } from '$lib/viz/format';
+	import { appName, formatAverage, formatDuration } from '$lib/viz/format';
 
 	let cache = $state<UsageCache | null>(null);
 	let loading = $state(true);
@@ -290,7 +290,7 @@
 						</Button>
 					{/snippet}
 				</DropdownMenu.Trigger>
-				<DropdownMenu.Content class="max-h-96 w-64 overflow-y-auto">
+				<DropdownMenu.Content class="max-h-96 w-80 overflow-y-auto">
 					<div class="sticky top-0 z-10 -mx-1 -mt-1 mb-1 bg-popover px-1 pt-1 pb-1">
 						<Input
 							bind:value={pickQuery}
@@ -315,7 +315,11 @@
 							{:else}
 								<IconApps size={16} class="text-muted-foreground" />
 							{/if}
-							{t.bundleId}
+							<!-- full name (wraps, never truncates) + time in the selected range -->
+							<span class="min-w-0 flex-1 break-all">{t.bundleId}</span>
+							<span class="text-xs text-muted-foreground tabular-nums">
+								{formatDuration(t.seconds)}
+							</span>
 						</DropdownMenu.CheckboxItem>
 					{:else}
 						<p class="px-2 py-3 text-center text-sm text-muted-foreground">No matches</p>
