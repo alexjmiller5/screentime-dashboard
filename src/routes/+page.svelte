@@ -35,7 +35,7 @@
 		bucketize,
 		type Bucket
 	} from '$lib/viz/series';
-	import { appName, formatDuration } from '$lib/viz/format';
+	import { appName, formatAverage } from '$lib/viz/format';
 
 	let cache = $state<UsageCache | null>(null);
 	let loading = $state(true);
@@ -347,7 +347,7 @@
 								: 'Average daily usage by month'}
 					</h2>
 					<span class="text-xs text-muted-foreground tabular-nums">
-						avg {formatDuration(avgPerDay)}/day
+						{formatAverage(avgPerDay, bucket)}
 					</span>
 				</div>
 				<Button variant="ghost" size="sm" onclick={() => (showTable = !showTable)}>
