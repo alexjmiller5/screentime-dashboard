@@ -343,8 +343,8 @@
 						{bucket === 'day'
 							? 'Daily usage by app'
 							: bucket === 'week'
-								? 'Average daily usage by week'
-								: 'Average daily usage by month'}
+								? 'Weekly usage by app'
+								: 'Monthly usage by app'}
 					</h2>
 					<span class="text-xs text-muted-foreground tabular-nums">
 						{formatAverage(avgPerDay, bucket)}

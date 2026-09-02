@@ -48,15 +48,14 @@ function bucketLabel(date: string, bucket: Bucket): string {
 	return addDays(date, -((weekday + 6) % 7));
 }
 
-/** Re-bucket a daily stacked series into week/month buckets holding the
- * AVERAGE seconds per day - edge buckets divide by the days the range
- * actually covers, so partial weeks/months stay honest. 'day' passes
+/** Re-bucket a daily stacked series into week/month buckets holding that
+ * bucket's TOTAL seconds, so a month bar reads as the month's usage (the
+ * header's avg/week and avg/month speak the same unit). 'day' passes
  * through untouched. */
 export function bucketize(s: StackedSeries, bucket: Bucket): StackedSeries {
 	if (bucket === 'day') return s;
 	const labels: string[] = [];
 	const indexOf = new Map<string, number>();
-	const dayCounts: number[] = [];
 	const dateBucket = s.dates.map((d) => {
 		const label = bucketLabel(d, bucket);
 		let i = indexOf.get(label);
@@ -64,9 +63,7 @@ export function bucketize(s: StackedSeries, bucket: Bucket): StackedSeries {
 			i = labels.length;
 			labels.push(label);
 			indexOf.set(label, i);
-			dayCounts.push(0);
 		}
-		dayCounts[i]++;
 		return i;
 	});
 	return {
@@ -74,7 +71,7 @@ export function bucketize(s: StackedSeries, bucket: Bucket): StackedSeries {
 		series: s.series.map(({ key, data }) => {
 			const sums = labels.map(() => 0);
 			data.forEach((v, di) => (sums[dateBucket[di]] += v));
-			return { key, data: sums.map((v, i) => v / dayCounts[i]) };
+			return { key, data: sums };
 		})
 	};
 }
