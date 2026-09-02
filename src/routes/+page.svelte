@@ -269,12 +269,12 @@
 			<Select.Root type="single" value={bucket} onValueChange={(v) => (bucket = v as Bucket)}>
 				<Select.Trigger>
 					<IconCalendarStats size={16} class="text-muted-foreground" />
-					{bucket === 'day' ? 'Daily' : bucket === 'week' ? 'Weekly avg' : 'Monthly avg'}
+					{bucket === 'day' ? 'Daily' : bucket === 'week' ? 'Weekly' : 'Monthly'}
 				</Select.Trigger>
 				<Select.Content>
 					<Select.Item value="day" label="Daily" />
-					<Select.Item value="week" label="Weekly avg" />
-					<Select.Item value="month" label="Monthly avg" />
+					<Select.Item value="week" label="Weekly" />
+					<Select.Item value="month" label="Monthly" />
 				</Select.Content>
 			</Select.Root>
 
