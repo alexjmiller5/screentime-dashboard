@@ -25,8 +25,8 @@ jobs:
         with:
           export-env: true
         env:
-          CLOUDFLARE_API_TOKEN: op://Screentime Dashboard/Screentime Dashboard Deploy Creds/api-token
-          CLOUDFLARE_ACCOUNT_ID: op://Screentime Dashboard/Screentime Dashboard Deploy Creds/account-id
+          CLOUDFLARE_API_TOKEN: op://Screentime Dashboard/Screentime Dashboard CI Cloudflare Token/api-token
+          CLOUDFLARE_ACCOUNT_ID: op://Screentime Dashboard/Screentime Dashboard CI Cloudflare Token/account-id
       - run: bun install --frozen-lockfile
       - run: bun run test
       - run: bun run build
