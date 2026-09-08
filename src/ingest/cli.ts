@@ -17,16 +17,18 @@
 //   SCREENTIME_BACKUP_LABEL                  launchd label `poll` kickstarts; unset =
 //                                            poll runs sync itself
 //   SCREENTIME_TIME_ZONE                     default: the system time zone
+//   SCREENTIME_STATE_DIR                     default ~/Library/Application Support/screentime-ingest
+//                                            (remembers the last refresh request handled)
 
 import { Database } from 'bun:sqlite';
 import { homedir, tmpdir } from 'node:os';
-import { unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { importBackups } from '../lib/import/importer';
 import { buildUsageCache } from '../lib/data/cache';
 import { guessLabels } from '../lib/import/labels';
 import { fsDir } from './fsdir';
-import { DashboardClient, planChunks, type Credential } from './client';
+import { DashboardClient, planChunks, shouldHandle, type Credential } from './client';
 
 const env = process.env;
 const log = (msg: string): void => console.log(`[${new Date().toISOString()}] ${msg}`);
@@ -115,9 +117,19 @@ async function launchdRunning(label: string): Promise<boolean> {
 	return /state = running/.test(out);
 }
 
+const stateDir = env.SCREENTIME_STATE_DIR ?? join(homedir(), 'Library', 'Application Support', 'screentime-ingest');
+const lastHandledFile = join(stateDir, 'last-handled-request');
+
 async function poll(): Promise<void> {
 	const url = required('SCREENTIME_DASHBOARD_URL');
-	if (!(await DashboardClient.pending(url))) return;
+	const pending = await DashboardClient.pending(url);
+	const lastHandled = await readFile(lastHandledFile, 'utf8').catch(() => null);
+	// Exactly one attempt per request: a sync that dies before it can report
+	// leaves the flag up, and re-kicking a full backup every minute is how a
+	// 1Password budget gets burned. Alex hits Refresh again to retry.
+	if (!shouldHandle(pending, lastHandled?.trim() ?? null)) return;
+	await mkdir(stateDir, { recursive: true });
+	await writeFile(lastHandledFile, pending!);
 	const label = env.SCREENTIME_BACKUP_LABEL;
 	if (!label) {
 		log('refresh requested - syncing inline');
