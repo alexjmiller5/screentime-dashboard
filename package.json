@@ -25,6 +25,7 @@
 		"@sveltejs/vite-plugin-svelte": "^7.1.2",
 		"@tabler/icons-svelte": "^3.46.0",
 		"@tailwindcss/vite": "^4.3.0",
+		"@types/bun": "^1.4.2",
 		"@types/sql.js": "^1.4.11",
 		"bits-ui": "^2.16.3",
 		"clsx": "^2.1.1",
@@ -32,6 +33,7 @@
 		"prettier-plugin-svelte": "^4.1.0",
 		"prettier-plugin-tailwindcss": "^0.8.0",
 		"shadcn-svelte": "^1.4.1",
+		"sql.js": "^1.14.2",
 		"svelte": "^5.56.1",
 		"svelte-check": "^4.6.0",
 		"tailwind-merge": "^3.5.0",
@@ -46,7 +48,6 @@
 	"dependencies": {
 		"chart.js": "^4.5.1",
 		"chartjs-adapter-dayjs-4": "^1.0.4",
-		"dayjs": "^1.11.23",
-		"sql.js": "^1.14.2"
+		"dayjs": "^1.11.23"
 	}
 }

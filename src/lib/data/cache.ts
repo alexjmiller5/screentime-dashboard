@@ -87,7 +87,18 @@ export function buildUsageCache(input: BuildInput): UsageCache {
 		}
 	}
 
-	const usageRows = rows.filter((r) => !SHELL_BUNDLE_RE.test(r.bundleId));
+	// One row per (source, device, date, bundle): DeviceActivity can hand us
+	// two segments for one local date (a segment boundary that isn't
+	// midnight, a time-zone change) - their seconds are the day's two parts.
+	const merged = new Map<string, UsageRow>();
+	for (const r of rows) {
+		if (SHELL_BUNDLE_RE.test(r.bundleId)) continue;
+		const key = `${r.source}|${r.device}|${r.date}|${r.bundleId}`;
+		const prev = merged.get(key);
+		if (prev) prev.seconds += r.seconds;
+		else merged.set(key, { ...r });
+	}
+	const usageRows = [...merged.values()];
 	usageRows.sort(
 		(a, b) =>
 			a.date.localeCompare(b.date) ||

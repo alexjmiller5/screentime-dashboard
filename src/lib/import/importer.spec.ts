@@ -69,7 +69,16 @@ describe('importBackups', () => {
 		const result = await importBackups(
 			// second snapshot duplicates the first - dedup must collapse it
 			fakeDir({ '2026-01-05': snapshot, '2026-01-12': snapshot, 'not-a-snapshot': {} }),
-			{ initSql: async () => SQL }
+			{
+				querySqlite: async (bytes, sql) => {
+					const db = new SQL.Database(bytes);
+					try {
+						return db.exec(sql)[0]?.values ?? [];
+					} finally {
+						db.close();
+					}
+				}
+			}
 		);
 
 		expect(result.snapshots).toEqual(['2026-01-05', '2026-01-12']);
@@ -90,7 +99,16 @@ describe('importBackups', () => {
 	it('records a per-snapshot error instead of failing the whole import', async () => {
 		const result = await importBackups(
 			fakeDir({ '2026-01-05': { 'biome-streams.tar.gz': new Uint8Array([1, 2, 3]) } }),
-			{ initSql: async () => SQL }
+			{
+				querySqlite: async (bytes, sql) => {
+					const db = new SQL.Database(bytes);
+					try {
+						return db.exec(sql)[0]?.values ?? [];
+					} finally {
+						db.close();
+					}
+				}
+			}
 		);
 		expect(result.errors).toHaveLength(1);
 		expect(result.errors[0]).toContain('2026-01-05');

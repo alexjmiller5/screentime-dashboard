@@ -10,10 +10,14 @@
 	},
 	"workers_dev": true,
 	"preview_urls": true,
-	"r2_buckets": [
+	// The derived Screen Time series (see migrations/). scripts/cf-d1.py creates
+	// the database if missing; CI applies migrations before every deploy.
+	"d1_databases": [
 		{
-			"binding": "CACHE",
-			"bucket_name": "screentime-dashboard-cache"
+			"binding": "DB",
+			"database_name": "screentime-dashboard",
+			"database_id": "15c1dc89-e22c-4c8c-9fc3-2a8c25a24471",
+			"migrations_dir": "migrations"
 		}
 	]
 }

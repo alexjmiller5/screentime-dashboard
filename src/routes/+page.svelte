@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import {
-		IconFolderOpen,
+		IconRefresh,
+		IconLoader2,
+		IconEdit,
 		IconTable,
 		IconChartBar,
 		IconAdjustmentsHorizontal,
@@ -24,9 +26,9 @@
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import StackedChart from '$lib/components/StackedChart.svelte';
 	import DataTable from '$lib/components/DataTable.svelte';
-	import ImportDialog from '$lib/components/ImportDialog.svelte';
+	import DevicesDialog from '$lib/components/DevicesDialog.svelte';
 	import type { UsageCache } from '$lib/data/cache';
-	import type { ImportResult } from '$lib/import/importer';
+	import type { RefreshStatus } from '$lib/server/store';
 	import {
 		filterRows,
 		dailyByApp,
@@ -40,10 +42,9 @@
 
 	let cache = $state<UsageCache | null>(null);
 	let loading = $state(true);
-	let importState: 'idle' | 'scanning' | 'labeling' | 'uploading' = $state('idle');
-	let importProgress = $state('');
-	let importError = $state('');
-	let scan = $state<ImportResult | null>(null);
+	let refresh = $state<RefreshStatus | null>(null);
+	let refreshError = $state('');
+	let devicesOpen = $state(false);
 
 	// Date range: a preset RULE ('90D'...) or '' = Custom, set by touching the
 	// slider directly - same interplay as notion-task-burndown-chart.
@@ -82,10 +83,81 @@
 		} catch {
 			/* first run */
 		}
+		await loadUsage();
+		loading = false;
+		// A refresh in flight from before a reload keeps being watched.
+		await loadRefresh();
+		if (refresh?.pending || refresh?.phase === 'running') watchRefresh();
+	});
+
+	async function loadUsage(): Promise<void> {
 		const res = await fetch('/api/usage');
 		if (res.ok) cache = (await res.json()) as UsageCache;
-		loading = false;
+	}
+	async function loadRefresh(): Promise<void> {
+		const res = await fetch('/api/refresh');
+		if (res.ok) refresh = (await res.json()) as RefreshStatus;
+	}
+
+	// Refresh = ask the mac mini (via the Worker's flag) for a fresh dump +
+	// rebuild, then poll until the import lands or fails.
+	const refreshBusy = $derived(refresh?.pending === true || refresh?.phase === 'running');
+	let watching = false;
+	async function requestRefresh(): Promise<void> {
+		refreshError = '';
+		const res = await fetch('/api/refresh', { method: 'POST' });
+		if (!res.ok) {
+			refreshError = `refresh request failed (${res.status})`;
+			return;
+		}
+		refresh = (await res.json()) as RefreshStatus;
+		watchRefresh();
+	}
+	function watchRefresh(): void {
+		if (watching) return;
+		watching = true;
+		const before = cache?.importedAt;
+		const tick = async (): Promise<void> => {
+			await loadRefresh();
+			if (refresh?.phase === 'failed') {
+				refreshError = refresh.error ?? 'refresh failed';
+			} else if (refreshBusy) {
+				setTimeout(tick, 5000);
+				return;
+			} else if (refresh?.importedAt && refresh.importedAt !== before) {
+				await loadUsage();
+			}
+			watching = false;
+		};
+		setTimeout(tick, 3000);
+	}
+	const secondsSince = (iso?: string): number =>
+		iso ? Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000)) : 0;
+	let now = $state(Date.now());
+	$effect(() => {
+		if (!refreshBusy) return;
+		const id = setInterval(() => (now = Date.now()), 1000);
+		return () => clearInterval(id);
 	});
+	const refreshHint = $derived.by(() => {
+		if (!refresh) return '';
+		void now;
+		if (refresh.phase === 'requested')
+			return `Waiting for the mini to pick it up… ${secondsSince(refresh.requestedAt)}s`;
+		if (refresh.phase === 'running')
+			return `Rebuilding on the mini… ${secondsSince(refresh.startedAt)}s`;
+		return '';
+	});
+
+	async function saveDevices(labels: Record<string, string>): Promise<void> {
+		const res = await fetch('/api/devices', {
+			method: 'PUT',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(labels)
+		});
+		if (!res.ok) throw new Error(`save failed (${res.status})`);
+		if (cache) cache = { ...cache, devices: labels };
+	}
 
 	$effect(() =>
 		localStorage.setItem(
@@ -185,35 +257,6 @@
 	function togglePick(key: string): void {
 		picked = picked.includes(key) ? picked.filter((k) => k !== key) : [...picked, key];
 	}
-
-	async function startImport(): Promise<void> {
-		importError = '';
-		importState = 'scanning';
-		try {
-			const { scanBackupsFolder } = await import('$lib/import/run');
-			scan = await scanBackupsFolder((msg) => (importProgress = msg));
-			importState = 'labeling';
-		} catch (error) {
-			importState = 'idle';
-			if (!(error instanceof DOMException && error.name === 'AbortError')) {
-				importError = error instanceof Error ? error.message : String(error);
-			}
-		}
-	}
-
-	async function confirmImport(labels: Record<string, string>): Promise<void> {
-		if (!scan) return;
-		importState = 'uploading';
-		try {
-			const { uploadCache } = await import('$lib/import/run');
-			cache = await uploadCache(scan, labels);
-			scan = null;
-			importState = 'idle';
-		} catch (error) {
-			importState = 'labeling';
-			importError = error instanceof Error ? error.message : String(error);
-		}
-	}
 </script>
 
 <Seo
@@ -229,14 +272,31 @@
 				App usage across devices, from weekly screentime-backup snapshots.
 			</p>
 		</div>
-		<Button onclick={startImport} disabled={importState === 'scanning'}>
-			<IconFolderOpen size={18} />
-			{importState === 'scanning' ? importProgress || 'Scanning…' : 'Import backups'}
-		</Button>
+		<div class="flex flex-col items-end gap-1">
+			<div class="flex items-center gap-2">
+				{#if cache}
+					<Button variant="ghost" size="sm" onclick={() => (devicesOpen = true)}>
+						<IconEdit size={16} />
+						Devices
+					</Button>
+				{/if}
+				<Button onclick={requestRefresh} disabled={refreshBusy}>
+					{#if refreshBusy}
+						<IconLoader2 size={18} class="animate-spin" />
+					{:else}
+						<IconRefresh size={18} />
+					{/if}
+					Refresh
+				</Button>
+			</div>
+			{#if refreshHint}
+				<p class="text-xs text-muted-foreground tabular-nums">{refreshHint}</p>
+			{/if}
+		</div>
 	</header>
 
-	{#if importError}
-		<p class="text-sm text-destructive">{importError}</p>
+	{#if refreshError}
+		<p class="text-sm text-destructive">Refresh failed: {refreshError}</p>
 	{/if}
 
 	{#if loading}
@@ -246,9 +306,8 @@
 			<IconChartBar size={40} class="text-muted-foreground" />
 			<h2 class="text-lg font-medium">No data yet</h2>
 			<p class="max-w-md text-sm text-muted-foreground">
-				Click <strong>Import backups</strong> and pick your local
-				<code class="font-mono text-xs">screen-time-backups</code> folder. Everything is parsed in your
-				browser; only the derived daily totals are uploaded.
+				Hit <strong>Refresh</strong>: the mac mini takes a fresh Screen Time dump, rebuilds the
+				daily series from every snapshot, and pushes them here.
 			</p>
 		</div>
 	{:else}
@@ -391,22 +450,17 @@
 		</section>
 
 		<p class="text-xs text-muted-foreground">
-			Last import {new Date(cache.importedAt).toLocaleString()} · time zone {cache.timeZone} · sources
-			are separate lenses and never summed together.
+			Data through {bounds.max} · synced {new Date(cache.importedAt).toLocaleString()} · time zone
+			{cache.timeZone} · sources are separate lenses and never summed together.
 		</p>
 	{/if}
 </div>
 
-{#if scan && (importState === 'labeling' || importState === 'uploading')}
-	<ImportDialog
+{#if cache && devicesOpen}
+	<DevicesDialog
 		open={true}
-		{scan}
-		initialLabels={cache?.devices ?? {}}
-		uploading={importState === 'uploading'}
-		onConfirm={confirmImport}
-		onCancel={() => {
-			scan = null;
-			importState = 'idle';
-		}}
+		devices={cache.devices}
+		onSave={saveDevices}
+		onClose={() => (devicesOpen = false)}
 	/>
 {/if}
