@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeAll } from 'vitest';
 import initSqlJs, { type SqlJsStatic } from 'sql.js';
-import { extractAppUsageSessions } from './knowledgec';
+import { APP_USAGE_SQL, extractAppUsageSessions } from './knowledgec';
 
 const COCOA = 978307200;
 const cocoa = (iso: string): number => Date.parse(iso) / 1000 - COCOA;
@@ -47,7 +47,10 @@ beforeAll(async () => {
 
 describe('extractAppUsageSessions', () => {
 	it('extracts /app/usage rows as absolute sessions in Unix ms', () => {
-		expect(extractAppUsageSessions(SQL, dbBytes)).toEqual([
+		const db = new SQL.Database(dbBytes);
+		const rows = db.exec(APP_USAGE_SQL)[0]?.values ?? [];
+		db.close();
+		expect(extractAppUsageSessions(rows)).toEqual([
 			{
 				bundleId: 'com.example.a',
 				startMs: Date.parse('2026-01-05T15:00:00Z'),

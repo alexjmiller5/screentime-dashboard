@@ -1,11 +1,10 @@
-// Import orchestrator: walk the backups folder, decode every snapshot
-// client-side, and return the raw material for buildUsageCache. Works on any
-// DirLike - the browser's FileSystemDirectoryHandle satisfies it structurally.
+// Import orchestrator: walk the backups folder, decode every snapshot, and
+// return the raw material for buildUsageCache. Works on any DirLike - the
+// ingest CLI's filesystem adapter, or a browser FileSystemDirectoryHandle.
 
-import type { SqlJsStatic } from 'sql.js';
 import { parseSegb } from '../data/segb';
 import { extractFocusEvents, type FocusEvent } from '../data/infocus';
-import { extractAppUsageSessions } from '../data/knowledgec';
+import { APP_USAGE_SQL, extractAppUsageSessions } from '../data/knowledgec';
 import type { UsageSession } from '../data/intervals';
 import { untar } from '../data/tar';
 import { parseBplist } from '../data/bplist';
@@ -43,7 +42,8 @@ export interface ImportResult {
 }
 
 export interface ImportOptions {
-	initSql: () => Promise<SqlJsStatic>;
+	/** Run one SQL query against a SQLite database image; rows as arrays. */
+	querySqlite: (dbBytes: Uint8Array, sql: string) => Promise<unknown[][]>;
 	onProgress?: (message: string) => void;
 }
 
@@ -59,7 +59,6 @@ export async function importBackups(dir: DirLike, options: ImportOptions): Promi
 		knowledgecSessionsByDevice: {},
 		deviceActivityByDevice: {}
 	};
-	let SQL: SqlJsStatic | null = null;
 	// (device, day) -> entries; snapshots walk in chronological order, so a
 	// later snapshot's copy of the same day overwrites the earlier partial one.
 	const segmentEntries = new Map<string, ActivityEntry[]>();
@@ -76,9 +75,10 @@ export async function importBackups(dir: DirLike, options: ImportOptions): Promi
 		const name = snapshot.name!;
 		result.snapshots.push(name);
 		options.onProgress?.(`reading ${name}…`);
-		try {
-			for await (const entry of snapshot.values()) {
-				if (entry.kind !== 'file') continue;
+		for await (const entry of snapshot.values()) {
+			if (entry.kind !== 'file') continue;
+			// One unreadable file loses that file, never the snapshot's other files.
+			try {
 				if (entry.name === 'biome-streams.tar.gz') {
 					for (const file of untar(await gunzip(await readEntry(entry)))) {
 						const classified = classifyStreamFile(file.name);
@@ -87,8 +87,11 @@ export async function importBackups(dir: DirLike, options: ImportOptions): Promi
 						(result.focusEventsByDevice[classified.device] ??= []).push(...events);
 					}
 				} else if (entry.name === 'knowledgeC.db.gz') {
-					SQL ??= await options.initSql();
-					const sessions = extractAppUsageSessions(SQL, await gunzip(await readEntry(entry)));
+					const rows = await options.querySqlite(
+						await gunzip(await readEntry(entry)),
+						APP_USAGE_SQL
+					);
+					const sessions = extractAppUsageSessions(rows);
 					(result.knowledgecSessionsByDevice[KNOWLEDGEC_DEVICE] ??= []).push(...sessions);
 				} else if (entry.name === 'device-activity.tar.gz') {
 					for (const file of untar(await gunzip(await readEntry(entry)))) {
@@ -100,9 +103,11 @@ export async function importBackups(dir: DirLike, options: ImportOptions): Promi
 						}
 					}
 				}
+			} catch (error) {
+				result.errors.push(
+					`${name}/${entry.name}: ${error instanceof Error ? error.message : String(error)}`
+				);
 			}
-		} catch (error) {
-			result.errors.push(`${name}: ${error instanceof Error ? error.message : String(error)}`);
 		}
 	}
 

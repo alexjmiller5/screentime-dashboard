@@ -3,18 +3,19 @@
 # requires-python = ">=3.12"
 # dependencies = ["httpx"]
 # ///
-"""Idempotent R2 bucket provisioner (declarative-via-script).
+"""Idempotent D1 database provisioner (declarative-via-script).
 
-wrangler.jsonc is the declaration: this script reads its `r2_buckets` bindings
-(bucket_name + preview_bucket_name) and creates any bucket that doesn't exist
-yet. Re-running converges; it never deletes or modifies existing buckets.
+wrangler.jsonc is the declaration: this script reads its `d1_databases`
+bindings (database_name + database_id) and creates any database that doesn't
+exist yet, then reports the id wrangler.jsonc must carry. Re-running converges;
+it never deletes. Schema lives in migrations/ (`wrangler d1 migrations apply`).
 
-  scripts/cf-r2.py                 ensure every declared bucket exists
-  scripts/cf-r2.py --dry-run       print the plan, change nothing
-  scripts/cf-r2.py --parse-only    just print the bucket names found in config
+  scripts/cf-d1.py                 ensure every declared database exists
+  scripts/cf-d1.py --dry-run       print the plan, change nothing
+  scripts/cf-d1.py --parse-only    just print the names found in config
 
-Auth: CLOUDFLARE_API_TOKEN env var if set (needs Account > Workers R2
-Storage: Edit), else the AI Agent Cloudflare API key from 1Password (by ID).
+Auth: CLOUDFLARE_API_TOKEN env var if set (needs Account > D1: Edit), else
+the AI Agent Cloudflare API key from 1Password (by ID).
 Account: CLOUDFLARE_ACCOUNT_ID env var, else the token's sole visible account.
 """
 
@@ -76,7 +77,6 @@ def strip_jsonc(text: str) -> str:
         else:
             out.append(ch)
         i += 1
-    # trailing commas: ", }" / ", ]" are legal JSONC but not JSON
     cleaned, j = [], 0
     s = "".join(out)
     while j < len(s):
@@ -92,14 +92,10 @@ def strip_jsonc(text: str) -> str:
     return "".join(cleaned)
 
 
-def declared_buckets(config: pathlib.Path) -> list[str]:
+def declared(config: pathlib.Path) -> dict[str, str]:
+    """database_name -> declared database_id (may be a CHANGEME placeholder)."""
     cfg = json.loads(strip_jsonc(config.read_text()))
-    names = []
-    for b in cfg.get("r2_buckets", []):
-        for key in ("bucket_name", "preview_bucket_name"):
-            if (name := b.get(key)) and name not in names:
-                names.append(name)
-    return names
+    return {d["database_name"]: d.get("database_id", "") for d in cfg.get("d1_databases", [])}
 
 
 def main() -> None:
@@ -109,20 +105,19 @@ def main() -> None:
         type=pathlib.Path,
         default=pathlib.Path(__file__).parent.parent / "wrangler.jsonc",
     )
-    ap.add_argument("--parse-only", action="store_true", help="print declared bucket names, no API")
+    ap.add_argument("--parse-only", action="store_true", help="print declared names, no API")
     ap.add_argument("--dry-run", action="store_true", help="print the plan, change nothing")
     args = ap.parse_args()
 
-    wanted = declared_buckets(args.config)
+    wanted = declared(args.config)
     if args.parse_only:
-        print("\n".join(wanted) or "(no r2_buckets declared)")
+        print("\n".join(wanted) or "(no d1_databases declared)")
         return
     if not wanted:
-        print(f"no r2_buckets declared in {args.config} - nothing to do")
+        print(f"no d1_databases declared in {args.config} - nothing to do")
         return
 
     c = httpx.Client(headers={"Authorization": f"Bearer {api_token()}"}, timeout=30)
-
     account = os.environ.get("CLOUDFLARE_ACCOUNT_ID")
     if not account:
         accounts = unwrap(c.get(f"{API}/accounts"))
@@ -131,20 +126,25 @@ def main() -> None:
         account = accounts[0]["id"]
 
     existing = {
-        b["name"]
-        for b in unwrap(c.get(f"{API}/accounts/{account}/r2/buckets", params={"per_page": 100}))[
-            "buckets"
-        ]
+        d["name"]: d["uuid"]
+        for d in unwrap(c.get(f"{API}/accounts/{account}/d1/database", params={"per_page": 100}))
     }
-
-    for name in wanted:
+    drift = False
+    for name, declared_id in wanted.items():
         if name in existing:
-            print(f"'{name}' already converged")
+            uuid = existing[name]
+            print(f"'{name}' exists ({uuid})")
         elif args.dry_run:
-            print(f"WOULD CREATE bucket '{name}'")
+            print(f"WOULD CREATE '{name}'")
+            continue
         else:
-            unwrap(c.post(f"{API}/accounts/{account}/r2/buckets", json={"name": name}))
-            print(f"created bucket '{name}'")
+            uuid = unwrap(c.post(f"{API}/accounts/{account}/d1/database", json={"name": name}))["uuid"]
+            print(f"created '{name}' ({uuid})")
+        if declared_id != uuid:
+            drift = True
+            print(f"  -> set database_id to {uuid} in {args.config.name} (declared: {declared_id or 'none'})")
+    if drift:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

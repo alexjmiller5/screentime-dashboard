@@ -34,7 +34,7 @@ def op_read(ref: str) -> str:
 
 
 def mint_deploy_token() -> str:
-    """Project-scoped CF token for CI: Workers Scripts + R2 only. Token values
+    """Project-scoped CF token for CI: Workers Scripts + D1 only. Token values
     are shown once, so delete any same-named token and recreate."""
     c = httpx.Client(
         base_url="https://api.cloudflare.com/client/v4",
@@ -47,7 +47,7 @@ def mint_deploy_token() -> str:
             log(f"deleting existing token {token_name} (value not re-readable)")
             c.delete(f"/user/tokens/{t['id']}").raise_for_status()
     groups = c.get("/user/tokens/permission_groups").raise_for_status().json()["result"]
-    want = {"Workers Scripts Write", "Workers R2 Storage Write"}
+    want = {"Workers Scripts Write", "D1 Write"}
     ids = [{"id": g["id"]} for g in groups if g["name"] in want]
     assert len(ids) == len(want), f"permission groups not found: {want}"
     r = c.post(
@@ -63,7 +63,7 @@ def mint_deploy_token() -> str:
             ],
         },
     ).raise_for_status()
-    log(f"✓ scoped deploy token '{token_name}' minted (Workers Scripts + R2)")
+    log(f"✓ scoped deploy token '{token_name}' minted (Workers Scripts + D1)")
     return r.json()["result"]["value"]
 
 

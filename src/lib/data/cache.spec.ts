@@ -170,3 +170,31 @@ describe('buildUsageCache', () => {
 		expect(cache.rows).toEqual([]);
 	});
 });
+
+describe('buildUsageCache row identity', () => {
+	it('merges two DeviceActivity segments that land on one local date by summing', () => {
+		const cache = buildUsageCache({
+			timeZone: TZ,
+			importedAt: 'x',
+			devices: {},
+			focusEventsByDevice: {},
+			knowledgecSessionsByDevice: {},
+			deviceActivityByDevice: {
+				dev: [
+					// 2026-06-05 00:00 and 04:00 New York, both the same local date
+					{
+						cocoaSeconds: Date.parse('2026-06-05T04:00:00Z') / 1000 - 978307200,
+						entries: [{ key: 'com.a', seconds: 682 }]
+					},
+					{
+						cocoaSeconds: Date.parse('2026-06-05T08:00:00Z') / 1000 - 978307200,
+						entries: [{ key: 'com.a', seconds: 87 }]
+					}
+				]
+			}
+		});
+		expect(cache.rows).toEqual([
+			{ source: 'screentime', device: 'dev', date: '2026-06-05', bundleId: 'com.a', seconds: 769 }
+		]);
+	});
+});

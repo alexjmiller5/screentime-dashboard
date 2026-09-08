@@ -7,30 +7,61 @@ snapshots. Private site - Alex only, via Cloudflare Access.
 
 ## Architecture
 
-- **No server-side ingestion.** The Import button uses `showDirectoryPicker()`
-  (Chromium-only, fine for a personal tool) on the local
-  `~/Documents/screen-time-backups/` folder and parses everything
-  client-side: gzip via `DecompressionStream`, knowledgeC.db via sql.js
-  (wasm), Biome SEGB segments + protobuf payloads via the TS parser in
-  `src/lib/data/`. The merged per-app/per-device daily-seconds series is
-  `PUT` to R2; the dashboard reads it back with one `GET`.
-- **Store parsed, not raw** (lesson from notion-task-burndown-chart): the
-  R2 `CACHE` binding holds one JSON object of derived daily series - tiny -
-  never the ~100MB of raw snapshots. The Worker stays under the free-tier
-  CPU cap because it never parses anything.
-- **API routes are thin** (`src/routes/api/*/+server.ts`, 10-30 lines):
-  stream R2 in/out, no business logic. All parsing/derivation lives in
-  **pure modules under `src/lib/data/`** - no DOM, no platform APIs, fully
-  unit-tested. Server-only code (R2 access) stays in `src/lib/server/`.
+- **Ingest runs on the mac mini, not in the browser and not in the Worker.**
+  `screentime-ingest` (`src/ingest/cli.ts`, Bun, zero npm deps - SQLite is
+  `bun:sqlite`, gzip is `DecompressionStream`) parses EVERY snapshot in
+  `~/Documents/screen-time-backups/` (iCloud-shared by both Macs, so the
+  MacBook's `-macbook` DeviceActivity snapshots are there too), rebuilds the
+  per-app/per-device daily + hourly series with the same pure modules the
+  tests cover, and pushes them to the Worker in ~2000-row chunks. Every run
+  is a full rebuild swept by `run_id`, so a parser change propagates on the
+  next sync.
+- **Refresh from the site = a flag, a poll, a kick.** The Refresh button
+  `POST /api/refresh` sets `meta.refresh_requested_at`. On the mini a launchd
+  poll agent (nix module `services.screentime-ingest`, every 60s) reads the
+  public `GET /api/refresh/pending` flag (Access-bypassed; it leaks nothing)
+  and, if set, kickstarts the screentime-backup agent, whose `postRun` hook
+  runs `screentime-ingest sync` inside the FDA-holding backup process. The
+  weekly backup fires the same hook, so the dashboard also refreshes
+  itself every Sunday. The mini never reaches 1Password on a poll - only a
+  real sync reads its credential.
+- **Machine auth = an Access service token**, not app code: the mini sends
+  `CF-Access-Client-Id/Secret` (its own credential, in the Mac Mini vault)
+  and Access admits it via a `non_identity` policy that `scripts/cf-access.py
+--service-token` maintains. The Worker still contains zero auth code.
+- **Storage: D1** (`DB` binding, database `screentime-dashboard`, schema in
+  `migrations/`): `usage` (source, device, date, bundle_id → seconds),
+  `hourly`, `devices` (uuid → label, edited in the Devices dialog; the
+  ingest only INSERTs guesses for unknown uuids), `meta` (imported_at,
+  time_zone, refresh_* markers). `GET /api/usage` assembles the whole
+  dataset (a few thousand rows) into the `UsageCache` shape the client
+  consumes; all filtering/grouping stays client-side over pure selectors.
+- **API routes are thin** (`src/routes/api/*/+server.ts`): SQL builders and
+  the refresh state machine live in `src/lib/server/store.ts` (pure,
+  unit-tested); parsing/derivation in `src/lib/data/` + `src/lib/import/`
+  (no DOM, no platform APIs, also what the CLI runs).
 - SSR is off (`export const ssr = false`) - the page is client-driven.
-- Bindings live in `wrangler.jsonc` (the IaC): the Worker + the `CACHE` R2
-  bucket (`screentime-dashboard-cache`). `scripts/cf-r2.py` creates declared
-  buckets idempotently; `bun run gen` regenerates binding types. Local dev
-  needs no provisioning - miniflare fakes R2 in `.wrangler/state/`.
+- `wrangler.jsonc` is the IaC (Worker + D1 binding). `scripts/cf-d1.py`
+  creates a declared database that doesn't exist yet; CI applies migrations
+  before every deploy; `bun run gen` regenerates binding types. Local dev:
+  `just migrate-local`, then `SCREENTIME_DASHBOARD_URL=http://localhost:5173
+SCREENTIME_DASHBOARD_CLIENT_ID=x SCREENTIME_DASHBOARD_CLIENT_SECRET=y just
+ingest` fills miniflare's D1 from this Mac's backups folder.
 - **Auth: Cloudflare Access at the edge** (Alex only), provisioned by
-  `scripts/cf-access.py` - the app contains zero auth code. No runtime
-  secrets: `.env.tpl` is intentionally empty; CI deploy creds are op:// refs
-  in `.github/workflows/deploy.yml` only.
+  `scripts/cf-access.py --pwa --public-path /api/refresh/pending
+--service-token "screentime-dashboard - Mac Mini"`. No runtime secrets:
+  `.env.tpl` is intentionally empty; CI deploy creds are op:// refs in
+  `.github/workflows/deploy.yml` only (the CI Cloudflare token carries
+  Workers Scripts + D1 Write, minted by `scripts/provision.py`).
+- **Installed on the mini via nix** (`flake.nix`: `packages.default` =
+  screentime-ingest, `darwinModules.default` = the poll agent + the
+  `syncCommand` handed to `services.screentime-backup.postRun`). Config is
+  env vars (`SCREENTIME_DASHBOARD_URL`, `..._CREDENTIAL_COMMAND` printing
+  `{clientId, clientSecret}`, `SCREENTIME_BACKUPS_DIR`,
+  `SCREENTIME_BACKUP_LABEL`, `SCREENTIME_TIME_ZONE`) - the app never knows
+  where a credential comes from. Gotchas: `bun:sqlite`'s `deserialize`
+  rejects some larger knowledgeC images, so the CLI opens a temp file; a
+  bad file only loses that file, never the snapshot (errors are per file).
 
 ## Data model (what the parsers produce)
 
@@ -45,8 +76,8 @@ project note):
   field 6 the bundle id - so durations are exact focus sessions, no gap
   heuristics. `tombstone/` subdirs hold deletion-bookkeeping records (no
   usage data; the extractor's field-type checks reject them) - skip them.
-  Device UUIDs are machine-specific and never hardcoded: labels are assigned
-  in the import UI and stored in the cache document.
+  Device UUIDs are machine-specific and never hardcoded: labels live in the
+  `devices` table, edited in the dashboard's Devices dialog.
 - **DeviceActivity `Cloud/<user>/<device>/Daily/ActivitySegments/*.plist`**
   (inside `device-activity.tar.gz`, capturable only on macOS ≤26.2 Macs -
   currently the MacBook): Apple's own cross-device Screen Time aggregates as
@@ -56,7 +87,10 @@ project note):
   rows; web domains get `web:<domain>` bundle ids. Apps and websites are
   parallel breakdowns of the SAME minutes - the UI's Apps/Websites view
   keeps them from ever being summed together. Hourly/ and Local/ files are
-  skipped; later snapshots overwrite earlier copies of the same day.
+  skipped; later snapshots overwrite earlier copies of the same day. Two
+  segments can land on one local date (non-midnight boundary, time-zone
+  change) - `buildUsageCache` sums them into the one row per
+  (source, device, date, bundle) that D1 keys on.
 - **knowledgeC `/app/usage`** rows give absolute Mac durations 2026-05-06 →
   2026-07-11 (laptop-era snapshots only; mini-era knowledgeC is empty).
   Mac Absolute Time epoch offset: `+ 978307200`.
@@ -101,9 +135,15 @@ adapter and compiler options live in `vite.config.ts` inside the
 ## Site basics
 
 - Every route renders `<Seo title description>`.
-- Favicon (`src/lib/assets/favicon.svg`) + `static/apple-touch-icon.png` are
-  purpose-driven for THIS site; theme-color metas in `src/app.html` match the
-  background tokens.
+- Favicon (`src/lib/assets/favicon.svg`) is purpose-driven for THIS site;
+  `scripts/generate-icons.sh` renders the homescreen PNG set from it
+  (`static/icon-192.png`, `icon-512.png`, `apple-touch-icon.png`);
+  `static/manifest.webmanifest` + the iOS metas in `src/app.html` make it an
+  installable homescreen app (Access bypass for those paths via `--pwa`).
+  theme-color metas match the background tokens.
+- Mobile-first layout per the `dashboards` skill: the control row wraps,
+  the chart keeps a fixed height, the table scrolls in its own container -
+  verify at 390px wide.
 - `src/hooks.server.ts`: http→https 301 + baseline security headers.
 - `+error.svelte` renders 404/500 with the theme.
 
@@ -117,6 +157,9 @@ adapter and compiler options live in `vite.config.ts` inside the
 | `just build`              | Production build                                    |
 | `just logs`               | `wrangler tail` on the deployed Worker              |
 | `just deploy`             | test + build + `wrangler deploy` - CI's job (below) |
+| `just migrate-local`      | apply D1 migrations to miniflare's local DB         |
+| `just migrate`            | apply D1 migrations to production (CI does this)    |
+| `just ingest`             | run the ingest CLI from this Mac (env in cli.ts)    |
 
 **Deploying = commit + push to `main`.** The GHA workflow tests, builds, and
 deploys - never `just deploy` locally without a stated reason. After pushing,
