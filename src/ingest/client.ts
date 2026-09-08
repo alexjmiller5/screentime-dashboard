@@ -47,10 +47,20 @@ export class DashboardClient {
 		if (!res.ok) throw new Error(`ingest ${res.status}: ${(await res.text()).slice(0, 200)}`);
 	}
 
-	/** Public, cookie-less endpoint - no credential needed to ask. */
-	static async pending(baseUrl: string, fetchFn: typeof fetch = fetch): Promise<boolean> {
+	/** Public, cookie-less endpoint - no credential needed to ask. Returns the
+	 * pending request's id (its requestedAt) or null. */
+	static async pending(baseUrl: string, fetchFn: typeof fetch = fetch): Promise<string | null> {
 		const res = await fetchFn(new URL('/api/refresh/pending', baseUrl));
 		if (!res.ok) throw new Error(`pending ${res.status}`);
-		return ((await res.json()) as { pending: boolean }).pending === true;
+		const body = (await res.json()) as { pending: boolean; requestedAt?: string };
+		return body.pending === true ? (body.requestedAt ?? 'unknown') : null;
 	}
+}
+
+/** A request is acted on ONCE: if the sync then dies before it can report
+ * (no credential, no network), the flag stays up but the poll must not
+ * keep kicking a full backup every minute. `lastHandled` is the id of the
+ * request the previous poll acted on. */
+export function shouldHandle(pending: string | null, lastHandled: string | null): boolean {
+	return pending !== null && pending !== lastHandled;
 }

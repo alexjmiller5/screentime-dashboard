@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DashboardClient, planChunks, ROWS_PER_CHUNK } from './client';
+import { DashboardClient, planChunks, ROWS_PER_CHUNK, shouldHandle } from './client';
 import type { UsageCache, UsageRow } from '../lib/data/cache';
 
 const row = (i: number): UsageRow => ({
@@ -55,8 +55,19 @@ describe('DashboardClient', () => {
 		await expect(c.post({ runId: 'r' })).rejects.toThrow('ingest 403: nope');
 	});
 
-	it('pending reads the public flag', async () => {
-		const fetchFn = (async () => Response.json({ pending: true })) as unknown as typeof fetch;
-		expect(await DashboardClient.pending('https://dash.example', fetchFn)).toBe(true);
+	it('pending reads the public flag and its request id', async () => {
+		let fetchFn = (async () => Response.json({ pending: true, requestedAt: 'r1' })) as unknown as typeof fetch;
+		expect(await DashboardClient.pending('https://dash.example', fetchFn)).toBe('r1');
+		fetchFn = (async () => Response.json({ pending: false })) as unknown as typeof fetch;
+		expect(await DashboardClient.pending('https://dash.example', fetchFn)).toBeNull();
+	});
+});
+
+describe('shouldHandle', () => {
+	it('acts on a new request once, never re-kicks the same one', () => {
+		expect(shouldHandle(null, null)).toBe(false);
+		expect(shouldHandle('r1', null)).toBe(true);
+		expect(shouldHandle('r1', 'r1')).toBe(false);
+		expect(shouldHandle('r2', 'r1')).toBe(true);
 	});
 });
