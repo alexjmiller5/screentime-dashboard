@@ -6,7 +6,7 @@
 let
   src = lib.fileset.toSource {
     root = ../.;
-    fileset = lib.fileset.fileFilter (f: !lib.hasSuffix ".spec.ts" f.name) (
+    fileset = lib.fileset.intersection (lib.fileset.fileFilter (f: !lib.hasSuffix ".spec.ts" f.name) ../.) (
       lib.fileset.unions [
         ../src/lib/data
         ../src/lib/import
