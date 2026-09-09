@@ -19,7 +19,7 @@
 	import 'chartjs-adapter-dayjs-4';
 	import dayjs from 'dayjs';
 	import * as MarkerTooltip from '$lib/components/ui/tooltip';
-	import { markerBucketIndex, assignLane, type Marker } from '$lib/viz/markers';
+	import { markerBucketIndex, markerLabelBounds, assignLane, type Marker } from '$lib/viz/markers';
 	import type { StackedSeries, Bucket } from '$lib/viz/series';
 	import { readChartTheme, type ChartTheme } from '$lib/viz/theme';
 	import { appColor, paletteIndex, formatDuration } from '$lib/viz/format';
@@ -90,11 +90,16 @@
 						bucket === 'month' ? i : dayjs(data.dates[i]).valueOf()
 					);
 					if (x < c.chartArea.left || x > c.chartArea.right) continue;
-					const width = Math.min(140, c.chartArea.right - c.chartArea.left);
-					const left = Math.max(
+					const label = events[0].title + (events.length > 1 ? ` (+${events.length - 1})` : '');
+					c.ctx.save();
+					c.ctx.font = `12px ${getComputedStyle(c.canvas).fontFamily}`;
+					const { left, width } = markerLabelBounds(
+						x,
+						c.ctx.measureText(label).width,
 						c.chartArea.left,
-						Math.min(x - width / 2, c.chartArea.right - width)
+						c.chartArea.right
 					);
+					c.ctx.restore();
 					const lane = assignLane(placed, left - 4, left + width + 4);
 					placed.push({ lane, left: left - 4, right: left + width + 4 });
 					positions.push({ key: i, x, top: lane * 26 + 2, left, width, events });
@@ -450,7 +455,7 @@
 		{#each markerLabels as position (position.key)}
 			<MarkerTooltip.Root ignoreNonKeyboardFocus={false}>
 				<MarkerTooltip.Trigger
-					class="absolute h-6 truncate rounded bg-card px-1 text-left text-xs text-foreground outline-offset-2 focus-visible:outline-2"
+					class="absolute h-6 truncate rounded bg-card px-1 text-center text-xs text-foreground outline-offset-2 focus-visible:outline-2"
 					style={`left:${position.left}px;top:${position.top}px;width:${position.width}px`}
 					aria-label={position.events.map((m) => `${m.date}: ${m.title}`).join('; ')}
 				>

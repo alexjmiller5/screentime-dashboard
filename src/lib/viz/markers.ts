@@ -46,3 +46,9 @@ export function assignLane(
 		if (!placed.some((p) => p.lane === lane && left < p.right && right > p.left)) return lane;
 	}
 }
+
+/** Match the text-width placement used by the task burndown markers. */
+export function markerLabelBounds(x: number, textWidth: number, min: number, max: number) {
+	const width = Math.min(textWidth + 8, 140, max - min);
+	return { left: Math.max(min, Math.min(x - width / 2, max - width)), width };
+}
