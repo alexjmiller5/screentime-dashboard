@@ -43,3 +43,11 @@ it('separates overlapping labels but reuses free lanes', () => {
 	expect(assignLane(placed, 50, 150)).toBe(1);
 	expect(assignLane(placed, 100, 150)).toBe(0);
 });
+
+it('anchors short marker labels to their line and clamps only at chart edges', async () => {
+	const { markerLabelBounds } = await import('./markers');
+	expect(markerLabelBounds(230, 24, 0, 250)).toEqual({ left: 214, width: 32 });
+	expect(markerLabelBounds(249, 24, 0, 250)).toEqual({ left: 218, width: 32 });
+	expect(markerLabelBounds(1, 24, 0, 250)).toEqual({ left: 0, width: 32 });
+	expect(markerLabelBounds(25, 200, 0, 50)).toEqual({ left: 0, width: 50 });
+});
