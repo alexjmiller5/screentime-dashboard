@@ -1,43 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-	afterFailedAttempt,
-	DashboardClient,
-	planAttempt,
-	planChunks,
-	RETRY_DELAYS_MS,
-	ROWS_PER_CHUNK
-} from './client';
-import type { UsageCache, UsageRow } from '../lib/data/cache';
-
-const row = (i: number): UsageRow => ({
-	source: 'infocus',
-	device: 'D',
-	date: '2026-09-01',
-	bundleId: `app${i}`,
-	seconds: i
-});
-
-describe('planChunks', () => {
-	it('splits rows and hourly into bounded chunks and ends with one final chunk', () => {
-		const cache: UsageCache = {
-			version: 1,
-			importedAt: 'x',
-			timeZone: 'UTC',
-			devices: { D: 'Mac' },
-			rows: Array.from({ length: ROWS_PER_CHUNK + 1 }, (_, i) => row(i)),
-			hourly: [{ device: 'D', date: '2026-09-01', hour: 1, bundleId: 'a', seconds: 2 }]
-		};
-		const chunks = planChunks(cache, 'run1');
-		expect(chunks.map((c) => [c.rows?.length, c.hourly?.length, c.final])).toEqual([
-			[ROWS_PER_CHUNK, undefined, undefined],
-			[1, undefined, undefined],
-			[undefined, 1, undefined],
-			[undefined, undefined, true]
-		]);
-		expect(chunks.at(-1)).toMatchObject({ runId: 'run1', timeZone: 'UTC', devices: { D: 'Mac' } });
-	});
-});
-
+import { afterFailedAttempt, DashboardClient, planAttempt, RETRY_DELAYS_MS } from './client';
 describe('DashboardClient', () => {
 	it('posts chunks with Access service-token headers and fails loudly on non-2xx', async () => {
 		const calls: { url: string; init: RequestInit }[] = [];

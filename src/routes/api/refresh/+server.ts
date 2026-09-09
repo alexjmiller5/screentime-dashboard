@@ -19,7 +19,7 @@ export const POST: RequestHandler = async ({ platform, request }) => {
 	const body = (await request.json().catch(() => ({}))) as { kind?: unknown };
 	const kind = isRefreshKind(body.kind) ? body.kind : 'dump';
 	const status = refreshStatus(await readMeta(db));
-	if (status.phase !== 'requested' && status.phase !== 'running') {
+	if (status.phase !== 'running') {
 		await runStatements(
 			db,
 			metaStatements({

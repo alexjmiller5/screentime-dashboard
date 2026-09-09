@@ -16,6 +16,9 @@ export const POST: RequestHandler = async ({ platform, request }) => {
 	} catch {
 		return new Response('not json', { status: 400 });
 	}
+	if (!chunk || typeof chunk !== 'object') return new Response('object required', { status: 400 });
+	if (chunk.rows || chunk.hourly || chunk.devices)
+		return new Response('Use the file import API; update the ingest client', { status: 409 });
 	if (typeof chunk.runId !== 'string' || !chunk.runId) {
 		return new Response('runId required', { status: 400 });
 	}

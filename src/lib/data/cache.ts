@@ -1,5 +1,5 @@
-// The R2 cache document: everything the dashboard needs, already derived.
-// Built client-side at import time; the Worker only stores and serves it.
+// The derived dataset consumed by the dashboard. Shared pure aggregation
+// merges committed file contributions into daily and hourly usage.
 
 import {
 	deriveDailyUsage,

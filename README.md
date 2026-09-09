@@ -6,15 +6,34 @@ trying to use less.
 
 Data comes from weekly [screentime-backup](https://github.com/alexjmiller5/screentime-backup)
 snapshots (knowledgeC.db + Biome SEGB streams + DeviceActivity plists). A
-Bun CLI, `screentime-ingest`, runs on the Mac that holds the snapshots: it
-parses every snapshot (gzip via `DecompressionStream`, SQLite via
-`bun:sqlite`, Biome SEGB/protobuf and binary plists via TS parsers) and
-pushes the merged per-app/per-device daily series to the Worker's D1. The
-dashboard's **Refresh** button asks that Mac for a fresh dump + rebuild
-(**Rebuild** re-parses the snapshots already on disk): the Worker records the
-request, a long-polling daemon on the Mac picks it up within a second, kicks
-the backup, and the backup's post-run hook pushes the new series. Failed
-attempts retry after 5, 15 and 60 minutes, then wait for a new request.
+Bun CLI, `screentime-ingest`, and the dashboard's local folder importer use
+the same incremental pipeline. Each compares every available snapshot file
+against D1's import ledger (path, SHA-256, parser version). Only missing or
+changed files are parsed and uploaded. An old snapshot is eligible even if
+newer usage is already present.
+
+- **Refresh** takes a fresh backup on the configured Mac, then imports all
+  missing or changed files, including older files newly available from iCloud.
+- **Import from this Mac** opens a folder picker. Select the backups folder;
+  parsing happens in the browser, using the same ledger and upload protocol.
+- **Rebuild** skips the new backup and reprocesses available files, useful
+  after parser changes. Unavailable files keep their previously imported data.
+
+Uploads are staged per file and committed only when every chunk is present.
+D1 retains each file's parsed events and segments, so overlapping snapshots
+are deduplicated before daily/hourly totals are computed. Derived responses
+are cached by data version behind Access; imports and label edits invalidate
+them. Inactive staged uploads expire after seven days. Failed reads and
+interrupted uploads never remove an imported file. Existing aggregate-only
+history remains a conservative floor until its originals can be recovered;
+reprocessing cannot reduce those preexisting totals without provenance.
+
+The Mac uses outbound long-polling (up to 30 seconds per request, with the
+Worker checking D1 every second). No inbound server is needed. The daemon
+allows four attempts per request, with retries after 5, 15 and 60 minutes.
+Only an actual import fetches a credential. The backup's post-run hook runs
+inside its Full Disk Access context. Grant that backup app Full Disk Access
+in macOS System Settings before its first run.
 
 ## Stack
 
@@ -25,7 +44,7 @@ Installable iOS/Android homescreen app. Scaffolded from the
 [cf-site](https://github.com/alexjmiller5/cf-site) template.
 
 ```
-src/routes/            page + thin API routes (usage, ingest, refresh, devices)
+src/routes/            page + thin API routes (usage, imports, ingest, refresh, devices, markers)
 src/lib/data/          pure parsing/derivation modules (unit-tested)
 src/lib/import/        snapshot walker + device-label guessing (pure)
 src/lib/server/        D1 SQL builders + refresh state machine (pure)
@@ -67,6 +86,12 @@ just check           # wrangler types + svelte-check + prettier
 ```
 
 Deploying = push to `main`; the GHA workflow tests, builds, and deploys.
+
+## Markers
+
+Use **Markers** to add, edit or delete dated notes. They appear on the chart
+and in an accessible list; week/month views retain the original event date.
+Marker content lives in D1, never in source control.
 
 ## Notes
 

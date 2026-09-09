@@ -7,41 +7,41 @@ snapshots. Private site - Alex only, via Cloudflare Access.
 
 ## Architecture
 
-- **Ingest runs on the mac mini, not in the browser and not in the Worker.**
-  `screentime-ingest` (`src/ingest/cli.ts`, Bun, zero npm deps - SQLite is
-  `bun:sqlite`, gzip is `DecompressionStream`) parses EVERY snapshot in
-  `~/Documents/screen-time-backups/` (iCloud-shared by both Macs, so the
-  MacBook's `-macbook` DeviceActivity snapshots are there too), rebuilds the
-  per-app/per-device daily + hourly series with the same pure modules the
-  tests cover, and pushes them to the Worker in ~2000-row chunks. Every run
-  is a full rebuild swept by `run_id`, so a parser change propagates on the
-  next sync.
-- **Refresh from the site = a flag, a long-poll, a kick.** Refresh (`kind:
-dump`) or Rebuild (`kind: rebuild`, no new snapshot) `POST /api/refresh`
-  and set `meta.refresh_requested_at` + `refresh_kind`. On the mini the
-  `screentime-ingest watch` daemon (nix module `services.screentime-ingest`,
-  launchd KeepAlive) long-polls the public `GET /api/refresh/pending?wait=30`
-  (Access-bypassed; it leaks nothing; the Worker holds the request and
-  answers the moment a flag lands, so pickup is near-instant) and
-  kickstarts the screentime-backup agent, whose `postRun` hook runs
-  `screentime-ingest sync` inside the FDA-holding backup process - a plain
-  launchd agent gets EPERM on ~/Documents, which is why even a rebuild goes
-  through the backup agent, with `skipDumpFlag` set so it skips the
-  snapshot. The weekly backup fires the same hook. **Retries are bounded**:
-  per request 1 attempt + retries after 5/15/60 min (`RETRY_DELAYS_MS`),
-  state in `~/Library/Application Support/screentime-ingest/attempt.json`;
-  then the request is left alone until a new one. The daemon never reaches
-  1Password - only a real sync reads its credential - so a 1P outage costs
-  at most 4 reads per request, never a loop.
+- **Incremental imports run on the Mac or in the browser.**
+  `src/lib/import/incremental.ts` is shared by the Bun CLI and local folder
+  picker. Every supported file in every dated snapshot is hashed and checked
+  against D1's ledger by path, content hash and parser version. Only missing
+  or changed files are parsed/uploaded; Rebuild forces available files.
+- **Files commit atomically.** `/api/imports` stages bounded parsed chunks,
+  checks completeness, then switches the file's active contribution. Failed
+  reads/uploads retain the prior contribution. Overlapping focus events and
+  sessions deduplicate before aggregation; newer DeviceActivity segments win.
+  `readUsageCache` derives from committed contributions; the usage route caches
+  the derived response by data version behind Access. Inactive staged uploads
+  expire after seven days. Aggregate-only rows
+  are retained as a conservative floor because they lack file provenance.
+  Never globally sweep history based on the files available in one scan.
+- **Refresh from the site = a flag, long-poll, backup, incremental import.**
+  Refresh (`dump`) takes a new snapshot; Rebuild skips the dump via the backup
+  module's `skipDumpFlag`. Both run the sync in the FDA-holding backup process.
+  The `watch` daemon holds `/api/refresh/pending?wait=30` requests while the
+  Worker checks D1 every second. It persists attempts before launch, permits
+  four attempts with 5/15/60-minute retry gaps, and never reads credentials
+  while polling. Failed requests remain retryable; stale running requests
+  become eligible again after 30 minutes. The weekly backup uses the same hook.
+- **Local import** uses a folder picker and bundled SQL.js for knowledgeC;
+  the CLI uses Bun SQLite. Both use the same parsers and ledger, so a file
+  imported from either machine is skipped by the other. Show imported,
+  skipped and unavailable file counts; partial success must remain visible.
 - **Machine auth = an Access service token**, not app code: the mini sends
   `CF-Access-Client-Id/Secret` (its own credential, in the Mac Mini vault)
   and Access admits it via a `non_identity` policy that `scripts/cf-access.py
 --service-token` maintains. The Worker still contains zero auth code.
 - **Storage: D1** (`DB` binding, database `screentime-dashboard`, schema in
   `migrations/`): `usage` (source, device, date, bundle_id → seconds),
-  `hourly`, `devices` (uuid → label, edited in the Devices dialog; the
+  `hourly`, file ledger/staged parsed contributions, `markers`, `devices` (uuid → label, edited in the Devices dialog; the
   ingest only INSERTs guesses for unknown uuids), `meta` (imported_at,
-  time_zone, refresh_* markers). `GET /api/usage` assembles the whole
+  time_zone, data_updated_at, refresh_* markers). `GET /api/usage` assembles the whole
   dataset (a few thousand rows) into the `UsageCache` shape the client
   consumes; all filtering/grouping stays client-side over pure selectors.
 - **API routes are thin** (`src/routes/api/*/+server.ts`): SQL builders and
@@ -62,7 +62,7 @@ ingest` fills miniflare's D1 from this Mac's backups folder.
   `.github/workflows/deploy.yml` only (the CI Cloudflare token carries
   Workers Scripts + D1 Write, minted by `scripts/provision.py`).
 - **Installed on the mini via nix** (`flake.nix`: `packages.default` =
-  screentime-ingest, `darwinModules.default` = the poll agent + the
+  screentime-ingest, `darwinModules.default` = the watch agent + the
   `syncCommand` handed to `services.screentime-backup.postRun`). Config is
   env vars (`SCREENTIME_DASHBOARD_URL`, `..._CREDENTIAL_COMMAND` printing
   `{clientId, clientSecret}`, `SCREENTIME_BACKUPS_DIR`,
