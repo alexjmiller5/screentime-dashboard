@@ -22,6 +22,7 @@ export interface SyncOptions extends ImportOptions {
 	timeZone: string;
 	force?: boolean;
 	signal?: AbortSignal;
+	onCounts?: (counts: Pick<SyncResult, 'imported' | 'skipped' | 'failed'>) => void;
 }
 export interface SyncResult {
 	imported: number;
@@ -193,6 +194,12 @@ export async function syncBackups(dir: DirLike, options: SyncOptions): Promise<S
 					if (options.signal?.aborted) throw error;
 					result.failed++;
 					result.errors.push(`${path}: ${describe(error)}`);
+				} finally {
+					options.onCounts?.({
+						imported: result.imported,
+						skipped: result.skipped,
+						failed: result.failed
+					});
 				}
 			}
 		}

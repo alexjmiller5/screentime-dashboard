@@ -27,8 +27,20 @@ snapshots. Private site - Alex only, via Cloudflare Access.
   The `watch` daemon holds `/api/refresh/pending?wait=30` requests while the
   Worker checks D1 every second. It persists attempts before launch, permits
   four attempts with 5/15/60-minute retry gaps, and never reads credentials
-  while polling. Failed requests remain retryable; stale running requests
-  become eligible again after 30 minutes. The weekly backup uses the same hook.
+  during idle polling. Each attempt reads a credential for acknowledgement,
+  and its import hook reads separately; 15-second heartbeats reuse them.
+  Scheduled retries and exhausted failures are visible to every device. The weekly backup uses the same hook.
+- **Confirmed refresh status** lives in `meta.refresh_job`, updated with
+  compare-and-swap through the Access-protected `/api/refresh/job`. Updates
+  carry request and attempt IDs; late attempts cannot overwrite newer work.
+  Stages are queued, acknowledged, backup process running, importing,
+  complete, retry scheduled and failed. Import heartbeats come from the
+  importer, not its watcher. After 60 seconds without one progress is
+  unconfirmed; after 30 minutes the normal bounded retry can reclaim it.
+  Repeated clicks join the active job. Explicit Retry can replace failed,
+  stale or unacknowledged jobs. Pages resume observation on load/focus,
+  poll active jobs every five seconds and idle status every 30 seconds.
+  Closing a tab never cancels a remote job; local imports stop safely.
 - **Local import** uses a folder picker and bundled SQL.js for knowledgeC;
   the CLI uses Bun SQLite. Both use the same parsers and ledger, so a file
   imported from either machine is skipped by the other. Show imported,

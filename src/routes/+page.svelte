@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
+	import { refreshMessage } from '$lib/viz/refresh-status';
 	import { replaceState } from '$app/navigation';
 	import { syncBackups, type SyncResult } from '$lib/import/incremental';
 	import { filesToDir, querySqlite } from '$lib/import/browser';
@@ -192,11 +193,10 @@
 		// A refresh in flight from before a reload keeps being watched.
 		try {
 			await loadRefresh();
-			if (refresh?.pending || refresh?.phase === 'running' || refresh?.phase === 'failed')
-				watchRefresh();
 		} catch (error) {
 			refreshError = String(error);
 		}
+		watchRefresh();
 	});
 
 	async function loadUsage(): Promise<void> {
@@ -212,6 +212,7 @@
 		const res = await fetch('/api/refresh');
 		if (!res.ok) throw new Error(`Refresh status failed (${res.status})`);
 		refresh = (await res.json()) as RefreshStatus;
+		now = Date.now();
 	}
 
 	// Refresh = ask the mac mini (via the Worker's flag) for a fresh dump +
@@ -220,6 +221,7 @@
 		refresh?.phase !== 'failed' && (refresh?.pending === true || refresh?.phase === 'running')
 	);
 	let watching = false;
+	let watchVersion = 0;
 	let refreshTimer: ReturnType<typeof setTimeout>;
 	let disposed = false;
 	onDestroy(() => {
@@ -227,71 +229,109 @@
 		clearTimeout(refreshTimer);
 		localController?.abort();
 	});
-	async function requestRefresh(kind: 'dump' | 'rebuild'): Promise<void> {
+	async function requestRefresh(kind: 'dump' | 'rebuild', retry = false): Promise<void> {
 		refreshError = '';
 		try {
 			const res = await fetch('/api/refresh', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ kind })
+				body: JSON.stringify({ kind, retry })
 			});
 			if (!res.ok) throw new Error(`Refresh request failed (${res.status})`);
 			refresh = (await res.json()) as RefreshStatus;
-			watchRefresh();
+			now = Date.now();
+			watchRefresh(true);
 		} catch (error) {
 			refreshError = String(error);
-			refresh = null;
 		}
 	}
-	function watchRefresh(): void {
-		if (watching) return;
+	function watchRefresh(restart = false): void {
+		if (watching && !restart) return;
+		clearTimeout(refreshTimer);
 		watching = true;
+		const version = ++watchVersion;
 		const tick = async (): Promise<void> => {
-			if (disposed) return;
+			if (disposed || version !== watchVersion) return;
+			if (document.hidden) {
+				refreshTimer = setTimeout(tick, 30_000);
+				return;
+			}
+			const previous = refresh;
 			try {
 				await loadRefresh();
+				if (disposed || version !== watchVersion) return;
+				refreshError = '';
 			} catch (error) {
-				refreshError = String(error);
-				refresh = null;
+				if (disposed || version !== watchVersion) return;
+				refreshError = `Could not confirm refresh progress: ${String(error)}`;
+				if (refresh) refresh = { ...refresh, confirmed: false };
+				refreshTimer = setTimeout(tick, 15_000);
+				return;
 			}
 			if (refreshBusy) {
 				if (!disposed) refreshTimer = setTimeout(tick, 5000);
 				return;
 			}
-			if (refresh?.phase === 'failed') refreshError = refresh.error ?? 'refresh failed';
+			if (refresh?.phase === 'failed' && refresh.stage !== 'retrying')
+				refreshError = refresh.error ?? 'refresh failed';
 			else if (refresh?.phase === 'idle') refreshError = '';
 			// A mini run can commit some files before failing on a later file.
 			try {
-				await loadUsage();
+				if (
+					!previous ||
+					previous.phase !== refresh?.phase ||
+					previous.importedAt !== refresh?.importedAt
+				)
+					await loadUsage();
 			} catch (error) {
 				refreshError = [refreshError, `Could not reload usage: ${String(error)}`]
 					.filter(Boolean)
 					.join(' · ');
 			}
-			if (!disposed && (!refresh || refresh.phase === 'failed')) {
+			if (disposed || version !== watchVersion) return;
+			if (!refresh || refresh.phase === 'failed') {
 				refreshTimer = setTimeout(tick, 15000);
 				return;
 			}
-			watching = false;
+			if (!disposed) refreshTimer = setTimeout(tick, 30_000);
 		};
 		refreshTimer = setTimeout(tick, 3000);
 	}
-	const secondsSince = (iso?: string): number =>
-		iso ? Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000)) : 0;
 	let now = $state(Date.now());
 	$effect(() => {
-		if (!refreshBusy) return;
+		if (!refreshBusy && refresh?.stage !== 'retrying') return;
 		const id = setInterval(() => (now = Date.now()), 1000);
 		return () => clearInterval(id);
 	});
-	const refreshHint = $derived.by(() => {
-		if (!refresh) return '';
-		void now;
-		if (refresh.phase === 'requested')
-			return `Requested ${secondsSince(refresh.requestedAt)}s ago. Waiting for import to start; the mini may already be preparing data.`;
-		if (refresh.phase === 'running')
-			return `${refresh.kind === 'rebuild' ? 'Reimporting all files' : 'Importing new files'} on the mini… ${secondsSince(refresh.startedAt)}s`;
-		return '';
+	const refreshHint = $derived(refreshMessage(refresh, now));
+	const canRetry = $derived(
+		refresh?.phase === 'failed' ||
+			(refresh?.phase === 'requested' && now - Date.parse(refresh.requestedAt!) > 60_000) ||
+			(refresh?.phase === 'running' && refresh.pending)
+	);
+	onMount(() => {
+		let resuming = false;
+		const resume = async () => {
+			if (document.hidden || disposed || resuming) return;
+			resuming = true;
+			try {
+				await loadRefresh();
+				await loadUsage();
+			} catch (error) {
+				refreshError = `Could not reload dashboard: ${String(error)}`;
+			} finally {
+				resuming = false;
+			}
+			if (!disposed) {
+				watchRefresh(true);
+			}
+		};
+		document.addEventListener('visibilitychange', resume);
+		window.addEventListener('focus', resume);
+		return () => {
+			document.removeEventListener('visibilitychange', resume);
+			window.removeEventListener('focus', resume);
+		};
 	});
 
 	async function saveDevices(labels: Record<string, string>): Promise<void> {
@@ -497,7 +537,18 @@
 				</Button>
 			</div>
 			{#if refreshHint}
-				<p class="text-xs text-muted-foreground tabular-nums">{refreshHint}</p>
+				<p role="status" class="max-w-xl text-xs text-muted-foreground tabular-nums">
+					{refreshHint}
+				</p>
+			{/if}
+			{#if canRetry}
+				<Button
+					variant="outline"
+					size="sm"
+					onclick={() => requestRefresh(refresh?.kind ?? 'dump', true)}
+				>
+					<IconRefresh size={16} /> Retry refresh
+				</Button>
 			{/if}
 		</div>
 	</header>
