@@ -116,6 +116,8 @@ adapter and compiler options live in `vite.config.ts` inside the
 
 ## UI conventions
 
+- **Saved apps** is a browser-local preset: selected app/site display keys, all devices, daily buckets; date range stays unchanged. Save from the app picker. Existing picked apps initialize the preset; `?saveApps=<JSON string array>` installs a preset and removes itself from the URL. Personal selections belong in preferences, never source code.
+
 - **Components: shadcn-svelte** in `src/lib/components/ui/` - that code is
   OURS: edit freely. Add more with `bunx shadcn-svelte@latest add <component>`.
 - **Theme: the cf-site template default palette** (stock oklch light+dark

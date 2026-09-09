@@ -1,9 +1,11 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
+	import { replaceState } from '$app/navigation';
 	import { syncBackups, type SyncResult } from '$lib/import/incremental';
 	import { filesToDir, querySqlite } from '$lib/import/browser';
 	import {
 		IconRefresh,
+		IconBookmark,
 		IconFlag,
 		IconFolder,
 		IconX,
@@ -22,6 +24,7 @@
 		IconDeviceLaptop,
 		IconDeviceMobile
 	} from '@tabler/icons-svelte';
+	import { readSavedApps, isSavedAppsActive } from '$lib/viz/saved-apps';
 	import { iconUrl } from '$lib/viz/icons.svelte';
 	import RangeSlider from '$lib/components/RangeSlider.svelte';
 	import { PRESET_LABELS, getPresetRange, type PresetLabel } from '$lib/viz/presets';
@@ -123,6 +126,13 @@
 	let bucket = $state<Bucket>('day');
 	// Explicitly picked chart series (empty = every app).
 	let picked = $state<string[]>([]);
+	let savedApps = $state<string[]>([]);
+	const savedAppsActive = $derived(isSavedAppsActive(picked, savedApps, excludedDevices, bucket));
+	function toggleSavedApps() {
+		picked = savedAppsActive ? [] : [...savedApps];
+		excludedDevices = [];
+		bucket = 'day';
+	}
 	let showTable = $state(false);
 
 	// All filter selections persist across reloads (like the burndown chart).
@@ -138,8 +148,10 @@
 				bucket?: Bucket;
 				excludedDevices?: string[];
 				picked?: string[];
+				savedApps?: string[];
 			};
-			picked = p.picked ?? [];
+			picked = readSavedApps(p.picked, []);
+			savedApps = readSavedApps(p.savedApps, picked);
 			bucket = p.bucket ?? 'day';
 			excludedDevices = p.excludedDevices ?? [];
 			activePreset = p.preset ?? '90D';
@@ -150,12 +162,28 @@
 		} catch {
 			/* first run */
 		}
+		const setup = new URL(location.href);
+		if (setup.searchParams.has('saveApps')) {
+			try {
+				const apps = readSavedApps(JSON.parse(setup.searchParams.get('saveApps')!), []);
+				if (apps.length) {
+					savedApps = apps;
+					picked = [...apps];
+					excludedDevices = [];
+					bucket = 'day';
+				}
+			} catch {
+				/* malformed setup link leaves preferences intact */
+			}
+			setup.searchParams.delete('saveApps');
+		}
 		try {
 			await loadUsage();
 		} catch (error) {
 			refreshError = String(error);
 		}
 		loading = false;
+		if (location.search.includes('saveApps=')) replaceState(setup, {});
 		try {
 			await loadMarkers();
 		} catch (error) {
@@ -260,7 +288,7 @@
 		if (!refresh) return '';
 		void now;
 		if (refresh.phase === 'requested')
-			return `Waiting for the mini to pick it up… ${secondsSince(refresh.requestedAt)}s`;
+			return `Requested ${secondsSince(refresh.requestedAt)}s ago. Waiting for import to start; the mini may already be preparing data.`;
 		if (refresh.phase === 'running')
 			return `${refresh.kind === 'rebuild' ? 'Reimporting all files' : 'Importing new files'} on the mini… ${secondsSince(refresh.startedAt)}s`;
 		return '';
@@ -279,7 +307,15 @@
 	$effect(() =>
 		localStorage.setItem(
 			PREFS_KEY,
-			JSON.stringify({ preset: activePreset, dateStart, dateEnd, bucket, excludedDevices, picked })
+			JSON.stringify({
+				preset: activePreset,
+				dateStart,
+				dateEnd,
+				bucket,
+				excludedDevices,
+				picked,
+				savedApps
+			})
 		)
 	);
 
@@ -533,6 +569,16 @@
 				</Select.Content>
 			</Select.Root>
 
+			<Button
+				variant={savedAppsActive ? 'default' : 'outline'}
+				size="sm"
+				disabled={savedApps.length === 0}
+				aria-pressed={savedAppsActive}
+				title="Saved apps and websites, all devices, daily. Click again to show all apps."
+				onclick={toggleSavedApps}
+			>
+				<IconBookmark size={16} /> Saved apps
+			</Button>
 			<DropdownMenu.Root>
 				<DropdownMenu.Trigger>
 					{#snippet child({ props })}
@@ -554,6 +600,14 @@
 							onkeydown={(e: KeyboardEvent) => e.stopPropagation()}
 						/>
 					</div>
+					<DropdownMenu.Item
+						disabled={picked.length === 0}
+						onclick={() => {
+							savedApps = [...picked];
+							excludedDevices = [];
+							bucket = 'day';
+						}}>Save selection as preset</DropdownMenu.Item
+					>
 					{#if picked.length > 0}
 						<DropdownMenu.Item onclick={() => (picked = [])}>Clear selection</DropdownMenu.Item>
 						<DropdownMenu.Separator />
