@@ -16,6 +16,13 @@ import {
 import { gunzip } from './gunzip';
 import { isSnapshotDirName, classifyStreamFile, classifyDeviceActivityFile } from './paths';
 
+/** Some failures (a truncated gzip stream) carry an empty message - a bare
+ * "WARN <file>:" tells you nothing, so fall back to the error's name. */
+function describe(error: unknown): string {
+	if (!(error instanceof Error)) return String(error);
+	return error.message || error.name || 'unknown error';
+}
+
 /** knowledgeC has no device field - it belongs to whichever Mac wrote the
  * snapshot. Attributed to this pseudo-device; labeled in the UI like any other. */
 export const KNOWLEDGEC_DEVICE = 'knowledgec';
@@ -104,9 +111,7 @@ export async function importBackups(dir: DirLike, options: ImportOptions): Promi
 					}
 				}
 			} catch (error) {
-				result.errors.push(
-					`${name}/${entry.name}: ${error instanceof Error ? error.message : String(error)}`
-				);
+				result.errors.push(`${name}/${entry.name}: ${describe(error)}`);
 			}
 		}
 	}

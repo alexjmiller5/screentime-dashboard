@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import {
 		IconRefresh,
+		IconRotate,
 		IconLoader2,
 		IconEdit,
 		IconTable,
@@ -103,9 +104,13 @@
 	// rebuild, then poll until the import lands or fails.
 	const refreshBusy = $derived(refresh?.pending === true || refresh?.phase === 'running');
 	let watching = false;
-	async function requestRefresh(): Promise<void> {
+	async function requestRefresh(kind: 'dump' | 'rebuild'): Promise<void> {
 		refreshError = '';
-		const res = await fetch('/api/refresh', { method: 'POST' });
+		const res = await fetch('/api/refresh', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ kind })
+		});
 		if (!res.ok) {
 			refreshError = `refresh request failed (${res.status})`;
 			return;
@@ -280,7 +285,23 @@
 						Devices
 					</Button>
 				{/if}
-				<Button onclick={requestRefresh} disabled={refreshBusy}>
+				{#if cache}
+					<Button
+						variant="outline"
+						size="sm"
+						onclick={() => requestRefresh('rebuild')}
+						disabled={refreshBusy}
+						title="Re-parse the snapshots already on disk (no new Screen Time dump)"
+					>
+						<IconRotate size={16} />
+						Rebuild
+					</Button>
+				{/if}
+				<Button
+					onclick={() => requestRefresh('dump')}
+					disabled={refreshBusy}
+					title="Take a fresh Screen Time dump on the mini, then rebuild"
+				>
 					{#if refreshBusy}
 						<IconLoader2 size={18} class="animate-spin" />
 					{:else}
