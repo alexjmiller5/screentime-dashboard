@@ -29,6 +29,7 @@
 //                                            skipped, not waited on forever
 
 import { Database } from 'bun:sqlite';
+import type { JobUpdate } from '../lib/server/refresh-job';
 import { homedir, tmpdir } from 'node:os';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -88,7 +89,7 @@ async function querySqlite(dbBytes: Uint8Array, sql: string): Promise<unknown[][
 	}
 }
 
-async function sync(force = false): Promise<void> {
+async function sync(force = false, context?: JobContext): Promise<void> {
 	const url = required('SCREENTIME_DASHBOARD_URL');
 	const backups = env.SCREENTIME_BACKUPS_DIR ?? join(homedir(), 'Documents', 'screen-time-backups');
 	const timeZone = env.SCREENTIME_TIME_ZONE ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -101,7 +102,32 @@ async function sync(force = false): Promise<void> {
 		headers.set('CF-Access-Client-Secret', cred.clientSecret);
 		return fetch(input, { ...init, headers, redirect: 'error' });
 	};
+	if (
+		context &&
+		!(await client.job({ ...context, stage: 'importing', detail: 'Checking backup files' }))
+	)
+		throw new Error('This refresh attempt is no longer active');
 	await client.post({ runId, started: true });
+	let detail = 'Checking backup files';
+	let counts = '';
+	let sending = false;
+	const heartbeat = context
+		? setInterval(async () => {
+				if (sending) return;
+				sending = true;
+				try {
+					await client.job({
+						...context,
+						stage: 'importing',
+						detail: `${counts}${detail}`.slice(0, 500)
+					});
+				} catch (error) {
+					log(`progress update failed: ${String(error)}`);
+				} finally {
+					sending = false;
+				}
+			}, 15_000)
+		: undefined;
 	try {
 		const readTimeout = Number(env.SCREENTIME_READ_TIMEOUT_MS) || DEFAULT_READ_TIMEOUT_MS;
 		const result = await syncBackups(fsDir(backups, undefined, readTimeout), {
@@ -109,7 +135,13 @@ async function sync(force = false): Promise<void> {
 			baseUrl: url,
 			fetchFn,
 			timeZone,
-			onProgress: log,
+			onProgress: (message) => {
+				log(message);
+				detail = message.slice(0, 500);
+			},
+			onCounts: (value) => {
+				counts = `${value.imported} imported, ${value.skipped} skipped, ${value.failed} unavailable · `;
+			},
 			force
 		});
 		log(
@@ -121,12 +153,28 @@ async function sync(force = false): Promise<void> {
 				`${result.failed} files unavailable; imported files and previous history are preserved. ${result.errors[0] ?? ''}`
 			);
 		await client.post({ runId, final: true });
+		if (context && !(await client.job({ ...context, stage: 'complete', detail })))
+			throw new Error('The refresh was superseded before completion');
 		log('sync done');
 	} catch (error) {
+		// Preserve the failure detail for the watcher, which owns retry timing.
+		if (context)
+			await client
+				.job({
+					...context,
+					stage: 'importing',
+					detail: `Import stopped: ${error instanceof Error ? error.message : String(error)}`.slice(
+						0,
+						500
+					)
+				})
+				.catch(() => {});
 		await client
 			.post({ runId, error: error instanceof Error ? error.message : String(error) })
 			.catch(() => {});
 		throw error;
+	} finally {
+		clearInterval(heartbeat);
 	}
 }
 
@@ -134,6 +182,30 @@ const stateDir =
 	env.SCREENTIME_STATE_DIR ??
 	join(homedir(), 'Library', 'Application Support', 'screentime-ingest');
 const stateFile = join(stateDir, 'attempt.json');
+interface JobContext {
+	requestId: string;
+	runId: string;
+	watchPid: number;
+	createdAt: number;
+}
+const contextFile = join(stateDir, 'active-job.json');
+async function readContext(): Promise<JobContext | undefined> {
+	try {
+		const context = JSON.parse(await readFile(contextFile, 'utf8')) as JobContext;
+		if (
+			typeof context.requestId !== 'string' ||
+			typeof context.runId !== 'string' ||
+			!Number.isInteger(context.watchPid) ||
+			!Number.isFinite(context.createdAt) ||
+			Date.now() - context.createdAt > 35 * 60_000
+		)
+			return;
+		process.kill(context.watchPid, 0);
+		return context;
+	} catch {
+		return;
+	}
+}
 /** Touched before a rebuild kick: the backup agent sees it and runs only its
  * post-run hook (screentime-backup's skipDumpFlag must point here). */
 const skipDumpFlag = join(stateDir, 'skip-dump');
@@ -164,43 +236,63 @@ const launchdRunning = async (label: string): Promise<boolean> =>
 
 /** Kick the backup agent and wait for it to finish (it runs the sync as its
  * post-run hook). Resolves once the agent is idle again or after `maxMs`. */
-async function kickAndWait(label: string, maxMs: number): Promise<void> {
+async function kickAndWait(
+	label: string,
+	maxMs: number,
+	client: DashboardClient,
+	context: JobContext,
+	kind: PendingRequest['kind']
+): Promise<void> {
 	const { code } = await launchctl('kickstart', `gui/${uid}/${label}`);
 	if (code !== 0) throw new Error(`launchctl kickstart ${label} failed`);
 	const deadline = Date.now() + maxMs;
-	await sleep(5000);
-	while ((await launchdRunning(label)) && Date.now() < deadline) await sleep(5000);
-	if (await launchdRunning(label))
-		throw new Error('backup still running; waiting for a later retry');
+	// A successful kick is only a launch request. Confirm that launchd sees
+	// the process before claiming the backup is running.
+	if (kind === 'dump' && (await launchdRunning(label)))
+		await client.job({ ...context, stage: 'copying', detail: 'Backup process is running' });
+	let lastHeartbeat = Date.now();
+	await sleep(1000);
+	while (await launchdRunning(label)) {
+		if (Date.now() >= deadline) throw new Error('Backup is still running; retry after it finishes');
+		if (Date.now() - lastHeartbeat >= 15_000) {
+			await client
+				.job({ ...context, stage: 'heartbeat' })
+				.catch((error) => log(`heartbeat failed: ${String(error)}`));
+			lastHeartbeat = Date.now();
+		}
+		await sleep(1000);
+	}
 }
 
-/** One attempt at a request. Throws if it can tell the attempt failed. */
-async function attempt(req: PendingRequest, url: string): Promise<void> {
+async function attempt(
+	req: PendingRequest,
+	client: DashboardClient,
+	context: JobContext
+): Promise<void> {
 	const label = env.SCREENTIME_BACKUP_LABEL;
-	if (!label) {
-		log(`${req.kind} requested - syncing inline`);
-		return sync(req.kind === 'rebuild');
-	}
-	if (await launchdRunning(label)) {
-		throw new Error(`${label} already running; retry after it finishes`);
-	} else {
+	if (!label) return sync(req.kind === 'rebuild', context);
+	if (await launchdRunning(label))
+		throw new Error('A backup is already running; retry after it finishes');
+	await mkdir(stateDir, { recursive: true });
+	await writeFile(contextFile, JSON.stringify(context));
+	try {
 		if (req.kind === 'rebuild') {
-			await mkdir(stateDir, { recursive: true });
 			await writeFile(skipDumpFlag, req.id);
 			await writeFile(join(stateDir, 'rebuild'), req.id);
 		} else {
 			await unlink(skipDumpFlag).catch(() => {});
 			await unlink(join(stateDir, 'rebuild')).catch(() => {});
 		}
-		log(
-			`${req.kind} requested - kickstarting ${label}${req.kind === 'rebuild' ? ' (skip-dump flag set)' : ''}`
-		);
-		await kickAndWait(label, 35 * 60_000);
+		await kickAndWait(label, 35 * 60_000, client, context, req.kind);
+		const status = await client.status();
+		if (status.requestId === req.id && status.stage !== 'complete')
+			throw new Error(
+				status.error ??
+					`Backup exited before completing the import${status.detail ? `. ${status.detail}` : ''}`
+			);
+	} finally {
+		await unlink(contextFile).catch(() => {});
 	}
-	// The sync reports its own start/finish/error; if the flag is still up
-	// for this request it died before it could (no credential, no network).
-	const still = await DashboardClient.pending(url);
-	if (still && still.id === req.id) throw new Error('request still pending after the attempt');
 }
 
 /** One pass: ask (holding up to `holdSeconds`), plan, maybe attempt. Returns
@@ -214,12 +306,36 @@ async function pass(url: string, holdSeconds: number): Promise<number> {
 	if (plan.action === 'exhausted') return holdSeconds * 1000 || 30_000;
 	// Persist before starting: process termination must not reset the attempt budget.
 	await writeState(afterFailedAttempt(req, state, Date.now()));
+	let client: DashboardClient | undefined;
+	const context: JobContext = {
+		requestId: req.id,
+		runId: crypto.randomUUID(),
+		watchPid: process.pid,
+		createdAt: Date.now()
+	};
+	let claimed = false;
 	try {
-		await attempt(req, url);
+		// Credentials are read once for an actual attempt, never for idle polls
+		// or individual heartbeat messages, and are held only in memory.
+		client = new DashboardClient(url, await credential());
+		claimed = await client.job({ ...context, stage: 'accepted' });
+		if (!claimed) return 0;
+		await attempt(req, client, context);
 		return 0;
 	} catch (error) {
 		const next = afterFailedAttempt(req, state, Date.now());
 		await writeState(next);
+		if (client && claimed) {
+			const stage: JobUpdate['stage'] = Number.isFinite(next.nextAttemptAt) ? 'retrying' : 'failed';
+			await client
+				.job({
+					...context,
+					stage,
+					detail: String(error instanceof Error ? error.message : error).slice(0, 500),
+					...(stage === 'retrying' ? { retryAt: new Date(next.nextAttemptAt).toISOString() } : {})
+				})
+				.catch((error) => log(`could not report failure: ${String(error)}`));
+		}
 		const retryIn = Number.isFinite(next.nextAttemptAt)
 			? `${Math.round((next.nextAttemptAt - Date.now()) / 60_000)} min`
 			: 'never (giving up on this request)';
@@ -256,7 +372,7 @@ try {
 		const flag = join(stateDir, 'rebuild');
 		const rebuild = await readFile(flag, 'utf8').catch(() => '');
 		if (rebuild) await unlink(flag).catch(() => {});
-		await sync(Boolean(rebuild) || process.argv.includes('--force'));
+		await sync(Boolean(rebuild) || process.argv.includes('--force'), await readContext());
 	} else if (command === 'poll') await poll();
 	else if (command === 'watch') await watch();
 	else {

@@ -31,9 +31,24 @@ reprocessing cannot reduce those preexisting totals without provenance.
 The Mac uses outbound long-polling (up to 30 seconds per request, with the
 Worker checking D1 every second). No inbound server is needed. The daemon
 allows four attempts per request, with retries after 5, 15 and 60 minutes.
-Only an actual import fetches a credential. The backup's post-run hook runs
+Idle polls read no credentials. Each actual attempt reads a credential to
+acknowledge the job, and the backup's import hook reads its own credential;
+heartbeats reuse these in memory. The backup's post-run hook runs
 inside its Full Disk Access context. Grant that backup app Full Disk Access
 in macOS System Settings before its first run.
+
+Refresh state lives in one D1 record. The mini acknowledges the request,
+confirms the backup process started, and reports import progress with a
+heartbeat every 15 seconds. After 60 seconds without an update the page
+shows progress as unconfirmed. A run with no heartbeat for 30 minutes becomes
+eligible for a bounded retry. Retry times and completion remain visible
+across tabs and devices. Repeated Refresh clicks join the current job;
+explicit Retry replaces a failed, stale or unacknowledged job.
+
+Closing a tab does not cancel a remote refresh. Reopening or focusing the
+page reloads status; visible tabs check active jobs every five seconds and
+idle status every 30 seconds. Local folder imports run in the browser and
+stop when it closes; completed files stay committed and are skipped next time.
 
 ## Stack
 

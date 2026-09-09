@@ -2,7 +2,8 @@
 // /api/ingest calls (small bodies keep every Worker invocation cheap) behind
 // Cloudflare Access service-token headers. Pure planning is unit-tested.
 
-import type { IngestChunk } from '../lib/server/store';
+import type { IngestChunk, RefreshStatus } from '../lib/server/store';
+import type { JobUpdate } from '../lib/server/refresh-job';
 
 export interface Credential {
 	clientId: string;
@@ -17,17 +18,35 @@ export class DashboardClient {
 	) {}
 
 	async post(chunk: IngestChunk): Promise<void> {
-		const res = await this.fetchFn(new URL('/api/ingest', this.baseUrl), {
-			method: 'POST',
+		const res = await this.send('/api/ingest', chunk);
+		if (!res.ok) throw new Error(`ingest ${res.status}: ${(await res.text()).slice(0, 200)}`);
+	}
+
+	async job(update: JobUpdate): Promise<boolean> {
+		const res = await this.send('/api/refresh/job', update);
+		if (res.status === 409) return false;
+		if (!res.ok) throw new Error(`job update ${res.status}`);
+		return true;
+	}
+
+	async status(): Promise<RefreshStatus> {
+		const res = await this.send('/api/refresh');
+		if (!res.ok) throw new Error(`refresh status ${res.status}`);
+		return res.json() as Promise<RefreshStatus>;
+	}
+
+	private async send(path: string, body?: unknown): Promise<Response> {
+		return this.fetchFn(new URL(path, this.baseUrl), {
+			method: body === undefined ? 'GET' : 'POST',
+			signal: AbortSignal.timeout(15_000),
 			redirect: 'error',
 			headers: {
 				'content-type': 'application/json',
 				'CF-Access-Client-Id': this.credential.clientId,
 				'CF-Access-Client-Secret': this.credential.clientSecret
 			},
-			body: JSON.stringify(chunk)
+			body: body === undefined ? undefined : JSON.stringify(body)
 		});
-		if (!res.ok) throw new Error(`ingest ${res.status}: ${(await res.text()).slice(0, 200)}`);
 	}
 
 	/** Public, cookie-less endpoint - no credential needed to ask. With
@@ -42,10 +61,15 @@ export class DashboardClient {
 		if (waitSeconds > 0) u.searchParams.set('wait', String(waitSeconds));
 		const res = await fetchFn(u);
 		if (!res.ok) throw new Error(`pending ${res.status}`);
-		const body = (await res.json()) as { pending: boolean; requestedAt?: string; kind?: string };
+		const body = (await res.json()) as {
+			pending: boolean;
+			id?: string;
+			requestedAt?: string;
+			kind?: string;
+		};
 		if (body.pending !== true) return null;
 		return {
-			id: body.requestedAt ?? 'unknown',
+			id: body.id ?? body.requestedAt ?? 'unknown',
 			kind: body.kind === 'rebuild' ? 'rebuild' : 'dump'
 		};
 	}

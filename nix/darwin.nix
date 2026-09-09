@@ -57,7 +57,8 @@ in
       description = ''
         Shell command printing {"clientId": ..., "clientSecret": ...} - the
         Cloudflare Access service token the dashboard admits. Run only when a
-        sync actually happens, never by the poll.
+        refresh attempt or sync actually happens, never during idle polling.
+        Heartbeats reuse the credential in memory.
       '';
     };
 

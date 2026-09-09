@@ -5,6 +5,7 @@ import { buildUsageCache, type UsageCache, type UsageRow, type HourlyRow } from 
 import { retainPreviousUsage } from '../data/retained';
 import { guessLabels } from '../import/labels';
 import { readImportedScan } from './incremental';
+import { jobStatus, type JobStage } from './refresh-job';
 
 /** D1 allows 100 bound parameters per statement; every table here has <= 6 columns. */
 export const ROWS_PER_STATEMENT = 16;
@@ -41,7 +42,8 @@ export type Meta = Partial<
 		| 'refresh_requested_at'
 		| 'refresh_kind'
 		| 'refresh_started_at'
-		| 'refresh_error',
+		| 'refresh_error'
+		| 'refresh_job',
 		string
 	>
 >;
@@ -64,6 +66,12 @@ export function clampWait(raw: string | null): number {
 }
 
 export interface RefreshStatus {
+	requestId?: string;
+	stage?: JobStage;
+	heartbeatAt?: string;
+	confirmed?: boolean;
+	retryAt?: string;
+	detail?: string;
 	/** True while a request is waiting for the ingest job to pick it up. */
 	pending: boolean;
 	phase: 'idle' | 'requested' | 'running' | 'failed';
@@ -78,6 +86,7 @@ export interface RefreshStatus {
  * after it, imported after it, or failed after it - or until that run goes
  * stale (see STALE_RUN_MS), which makes it live again. */
 export function refreshStatus(meta: Meta, now = Date.now()): RefreshStatus {
+	if (meta.refresh_job) return jobStatus(JSON.parse(meta.refresh_job), now);
 	const req = meta.refresh_requested_at;
 	const started = meta.refresh_started_at;
 	const imported = meta.imported_at;

@@ -16,11 +16,16 @@ export const GET: RequestHandler = async ({ platform, url }) => {
 	for (;;) {
 		const status = refreshStatus(await readMeta(db));
 		const { requestedAt, kind } = status;
-		const pending = status.pending || status.phase === 'failed';
+		const pending = status.pending || (!status.stage && status.phase === 'failed');
 		if (pending || Date.now() >= deadline) {
-			return json(pending ? { pending, requestedAt, kind } : { pending }, {
-				headers: { 'cache-control': 'no-store' }
-			});
+			return json(
+				pending
+					? { pending, requestedAt, kind, ...(status.requestId ? { id: status.requestId } : {}) }
+					: { pending },
+				{
+					headers: { 'cache-control': 'no-store' }
+				}
+			);
 		}
 		await new Promise((r) => setTimeout(r, Math.min(POLL_MS, deadline - Date.now())));
 	}
