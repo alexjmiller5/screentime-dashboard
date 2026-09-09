@@ -1,12 +1,14 @@
 # nix-darwin module: keep a Screentime Dashboard fed from this Mac.
 #
-# Two pieces, both launchd user agents:
-#   - the POLL agent asks the dashboard every `pollInterval` seconds whether a
-#     refresh was requested (a public, credential-free flag) and, if so,
-#     kickstarts the screentime-backup agent - whose post-run hook must run
-#     `config.services.screentime-ingest.syncCommand` (wire it via
-#     services.screentime-backup.postRun). Without a backup agent the poll
-#     runs the sync itself.
+# Two pieces:
+#   - the WATCH daemon (launchd, kept alive) long-polls the dashboard's public,
+#     credential-free "refresh requested?" flag and acts on each request with
+#     bounded retries: it kickstarts the screentime-backup agent - whose
+#     post-run hook must run `config.services.screentime-ingest.syncCommand`
+#     (wire services.screentime-backup.postRun) - and for a "rebuild" request
+#     first sets the skip-dump flag (wire services.screentime-backup.skipDumpFlag
+#     = config.services.screentime-ingest.skipDumpFlag) so the agent only
+#     runs the hook. Without a backup agent the daemon runs the sync itself.
 #   - `sync` (the exported syncCommand) parses every snapshot in backupsDir
 #     and pushes the series to the dashboard through Cloudflare Access with a
 #     service token, read at run time from `credentialCommand`.
@@ -21,11 +23,14 @@ let
   cfg = config.services.screentime-ingest;
   pkg = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
   logFile = "/Users/${cfg.user}/Library/Logs/screentime-ingest.log";
+  stateDir = "/Users/${cfg.user}/Library/Application Support/screentime-ingest";
   # The CLI with this machine's wiring baked in (env is the CLI's config seam).
   wrapper = pkgs.writeShellScriptBin "screentime-ingest" ''
     export SCREENTIME_DASHBOARD_URL=${lib.escapeShellArg cfg.url}
     export SCREENTIME_DASHBOARD_CREDENTIAL_COMMAND=${lib.escapeShellArg cfg.credentialCommand}
     export SCREENTIME_BACKUPS_DIR=${lib.escapeShellArg cfg.backupsDir}
+    export SCREENTIME_STATE_DIR=${lib.escapeShellArg stateDir}
+    export SCREENTIME_HOLD_SECONDS=${toString cfg.holdSeconds}
     ${lib.optionalString (cfg.backupLabel != "") "export SCREENTIME_BACKUP_LABEL=${lib.escapeShellArg cfg.backupLabel}"}
     ${lib.optionalString (cfg.timeZone != null) "export SCREENTIME_TIME_ZONE=${lib.escapeShellArg cfg.timeZone}"}
     exec ${pkg}/bin/screentime-ingest "$@" >> ${lib.escapeShellArg logFile} 2>&1
@@ -73,10 +78,17 @@ in
       '';
     };
 
-    pollInterval = lib.mkOption {
+    holdSeconds = lib.mkOption {
       type = lib.types.int;
-      default = 60;
-      description = "Seconds between refresh-flag polls.";
+      default = 30;
+      description = "How long each long-poll of the refresh flag is held (0-30). Pickup latency is ~0 either way; this only sets the request rate.";
+    };
+
+    skipDumpFlag = lib.mkOption {
+      type = lib.types.str;
+      readOnly = true;
+      default = "${stateDir}/skip-dump";
+      description = "The flag file a rebuild request sets - hand it to services.screentime-backup.skipDumpFlag.";
     };
 
     timeZone = lib.mkOption {
@@ -96,15 +108,18 @@ in
   config = lib.mkIf cfg.enable {
     environment.systemPackages = [ wrapper ];
 
-    launchd.user.agents.screentime-ingest-poll = {
+    launchd.user.agents.screentime-ingest-watch = {
       serviceConfig = {
-        Label = "com.alexmiller.screentime-dashboard.poll";
+        Label = "com.alexmiller.screentime-dashboard.watch";
         ProgramArguments = [
           "${wrapper}/bin/screentime-ingest"
-          "poll"
+          "watch"
         ];
-        StartInterval = cfg.pollInterval;
+        KeepAlive = true;
         RunAtLoad = true;
+        # A crashing daemon must not become a hot loop (it never reads a
+        # credential, but it does hit the Worker).
+        ThrottleInterval = 30;
         ProcessType = "Background";
         StandardOutPath = logFile;
         StandardErrorPath = logFile;

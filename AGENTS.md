@@ -16,15 +16,23 @@ snapshots. Private site - Alex only, via Cloudflare Access.
   tests cover, and pushes them to the Worker in ~2000-row chunks. Every run
   is a full rebuild swept by `run_id`, so a parser change propagates on the
   next sync.
-- **Refresh from the site = a flag, a poll, a kick.** The Refresh button
-  `POST /api/refresh` sets `meta.refresh_requested_at`. On the mini a launchd
-  poll agent (nix module `services.screentime-ingest`, every 60s) reads the
-  public `GET /api/refresh/pending` flag (Access-bypassed; it leaks nothing)
-  and, if set, kickstarts the screentime-backup agent, whose `postRun` hook
-  runs `screentime-ingest sync` inside the FDA-holding backup process. The
-  weekly backup fires the same hook, so the dashboard also refreshes
-  itself every Sunday. The mini never reaches 1Password on a poll - only a
-  real sync reads its credential.
+- **Refresh from the site = a flag, a long-poll, a kick.** Refresh (`kind:
+dump`) or Rebuild (`kind: rebuild`, no new snapshot) `POST /api/refresh`
+  and set `meta.refresh_requested_at` + `refresh_kind`. On the mini the
+  `screentime-ingest watch` daemon (nix module `services.screentime-ingest`,
+  launchd KeepAlive) long-polls the public `GET /api/refresh/pending?wait=30`
+  (Access-bypassed; it leaks nothing; the Worker holds the request and
+  answers the moment a flag lands, so pickup is near-instant) and
+  kickstarts the screentime-backup agent, whose `postRun` hook runs
+  `screentime-ingest sync` inside the FDA-holding backup process - a plain
+  launchd agent gets EPERM on ~/Documents, which is why even a rebuild goes
+  through the backup agent, with `skipDumpFlag` set so it skips the
+  snapshot. The weekly backup fires the same hook. **Retries are bounded**:
+  per request 1 attempt + retries after 5/15/60 min (`RETRY_DELAYS_MS`),
+  state in `~/Library/Application Support/screentime-ingest/attempt.json`;
+  then the request is left alone until a new one. The daemon never reaches
+  1Password - only a real sync reads its credential - so a 1P outage costs
+  at most 4 reads per request, never a loop.
 - **Machine auth = an Access service token**, not app code: the mini sends
   `CF-Access-Client-Id/Secret` (its own credential, in the Mac Mini vault)
   and Access admits it via a `non_identity` policy that `scripts/cf-access.py

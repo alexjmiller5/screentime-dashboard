@@ -32,15 +32,38 @@ export function insertStatements(
 
 export type Meta = Partial<
 	Record<
-		'imported_at' | 'time_zone' | 'refresh_requested_at' | 'refresh_started_at' | 'refresh_error',
+		| 'imported_at'
+		| 'time_zone'
+		| 'refresh_requested_at'
+		| 'refresh_kind'
+		| 'refresh_started_at'
+		| 'refresh_error',
 		string
 	>
 >;
+
+/** dump = fresh Screen Time snapshot first; rebuild = re-parse what's there. */
+export type RefreshKind = 'dump' | 'rebuild';
+export const isRefreshKind = (v: unknown): v is RefreshKind => v === 'dump' || v === 'rebuild';
+
+/** A run that has neither imported nor reported an error this long after it
+ * started is presumed dead (the machine slept, the process was killed): the
+ * request goes back to pending so the normal bounded retry picks it up, and
+ * the UI stops showing a run that will never finish. */
+export const STALE_RUN_MS = 30 * 60_000;
+
+/** Longest a pending long-poll may hold before answering "nothing yet". */
+export const MAX_WAIT_SECONDS = 30;
+export function clampWait(raw: string | null): number {
+	const n = Number(raw);
+	return Number.isFinite(n) ? Math.min(MAX_WAIT_SECONDS, Math.max(0, Math.floor(n))) : 0;
+}
 
 export interface RefreshStatus {
 	/** True while a request is waiting for the ingest job to pick it up. */
 	pending: boolean;
 	phase: 'idle' | 'requested' | 'running' | 'failed';
+	kind: RefreshKind;
 	requestedAt?: string;
 	startedAt?: string;
 	importedAt?: string;
@@ -48,17 +71,25 @@ export interface RefreshStatus {
 }
 
 /** ISO timestamps compare lexically. A request is live until a run started
- * after it, imported after it, or failed after it. */
-export function refreshStatus(meta: Meta): RefreshStatus {
+ * after it, imported after it, or failed after it - or until that run goes
+ * stale (see STALE_RUN_MS), which makes it live again. */
+export function refreshStatus(meta: Meta, now = Date.now()): RefreshStatus {
 	const req = meta.refresh_requested_at;
 	const started = meta.refresh_started_at;
 	const imported = meta.imported_at;
-	const base = { requestedAt: req, startedAt: started, importedAt: imported };
+	const base = {
+		kind: isRefreshKind(meta.refresh_kind) ? meta.refresh_kind : ('dump' as const),
+		requestedAt: req,
+		startedAt: started,
+		importedAt: imported
+	};
 	if (!req || (imported && imported >= req)) return { ...base, pending: false, phase: 'idle' };
 	if (started && started >= req) {
-		return meta.refresh_error
-			? { ...base, pending: false, phase: 'failed', error: meta.refresh_error }
-			: { ...base, pending: false, phase: 'running' };
+		if (meta.refresh_error) {
+			return { ...base, pending: false, phase: 'failed', error: meta.refresh_error };
+		}
+		const stale = now - Date.parse(started) > STALE_RUN_MS;
+		if (!stale) return { ...base, pending: false, phase: 'running' };
 	}
 	if (meta.refresh_error && !started) {
 		return { ...base, pending: false, phase: 'failed', error: meta.refresh_error };

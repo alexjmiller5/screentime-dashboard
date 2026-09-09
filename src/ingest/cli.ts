@@ -4,9 +4,13 @@
 // screentime-backup folder and push them to the Worker's D1.
 //
 //   screentime-ingest sync   parse every snapshot, push to the dashboard
-//   screentime-ingest poll   ask the dashboard whether a refresh was requested;
-//                            if so kick the backup agent (whose post-run hook
-//                            runs `sync`), or run `sync` inline without one
+//   screentime-ingest watch  daemon: long-poll the dashboard for refresh
+//                            requests and act on each - kick the backup agent
+//                            (whose post-run hook runs `sync`; a "rebuild"
+//                            request sets the skip-dump flag first), or run
+//                            `sync` inline when there is no backup agent.
+//                            Bounded retries with growing gaps per request.
+//   screentime-ingest poll   one pass of the above, no hold (cron-style)
 //
 // Config (env):
 //   SCREENTIME_DASHBOARD_URL                 https://<dashboard host>      (required)
@@ -18,7 +22,11 @@
 //                                            poll runs sync itself
 //   SCREENTIME_TIME_ZONE                     default: the system time zone
 //   SCREENTIME_STATE_DIR                     default ~/Library/Application Support/screentime-ingest
-//                                            (remembers the last refresh request handled)
+//                                            (attempt state + the skip-dump flag file)
+//   SCREENTIME_HOLD_SECONDS                  long-poll hold per request (default 30, max 30)
+//   SCREENTIME_READ_TIMEOUT_MS               per-file read timeout (default 120000) - an
+//                                            iCloud-evicted file that never arrives is
+//                                            skipped, not waited on forever
 
 import { Database } from 'bun:sqlite';
 import { homedir, tmpdir } from 'node:os';
@@ -27,8 +35,16 @@ import { join } from 'node:path';
 import { importBackups } from '../lib/import/importer';
 import { buildUsageCache } from '../lib/data/cache';
 import { guessLabels } from '../lib/import/labels';
-import { fsDir } from './fsdir';
-import { DashboardClient, planChunks, shouldHandle, type Credential } from './client';
+import { DEFAULT_READ_TIMEOUT_MS, fsDir } from './fsdir';
+import {
+	afterFailedAttempt,
+	DashboardClient,
+	planAttempt,
+	planChunks,
+	type AttemptState,
+	type Credential,
+	type PendingRequest
+} from './client';
 
 const env = process.env;
 const log = (msg: string): void => console.log(`[${new Date().toISOString()}] ${msg}`);
@@ -83,7 +99,11 @@ async function sync(): Promise<void> {
 	const client = new DashboardClient(url, await credential());
 	await client.post({ runId, started: true });
 	try {
-		const scan = await importBackups(fsDir(backups), { querySqlite, onProgress: log });
+		const readTimeout = Number(env.SCREENTIME_READ_TIMEOUT_MS) || DEFAULT_READ_TIMEOUT_MS;
+		const scan = await importBackups(fsDir(backups, undefined, readTimeout), {
+			querySqlite,
+			onProgress: log
+		});
 		if (scan.snapshots.length === 0) throw new Error(`no snapshots under ${backups}`);
 		for (const e of scan.errors) log(`WARN ${e}`);
 		const cache = buildUsageCache({
@@ -107,56 +127,123 @@ async function sync(): Promise<void> {
 	}
 }
 
-async function launchdRunning(label: string): Promise<boolean> {
-	const proc = Bun.spawn(['/bin/launchctl', 'print', `gui/${process.getuid?.() ?? 501}/${label}`], {
-		stdout: 'pipe',
-		stderr: 'ignore'
-	});
-	const out = await new Response(proc.stdout).text();
-	await proc.exited;
-	return /state = running/.test(out);
+const stateDir =
+	env.SCREENTIME_STATE_DIR ??
+	join(homedir(), 'Library', 'Application Support', 'screentime-ingest');
+const stateFile = join(stateDir, 'attempt.json');
+/** Touched before a rebuild kick: the backup agent sees it and runs only its
+ * post-run hook (screentime-backup's skipDumpFlag must point here). */
+const skipDumpFlag = join(stateDir, 'skip-dump');
+const uid = process.getuid?.() ?? 501;
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+async function readState(): Promise<AttemptState | null> {
+	try {
+		return JSON.parse(await readFile(stateFile, 'utf8')) as AttemptState;
+	} catch {
+		return null;
+	}
+}
+async function writeState(state: AttemptState): Promise<void> {
+	await mkdir(stateDir, { recursive: true });
+	await writeFile(stateFile, JSON.stringify(state));
 }
 
-const stateDir = env.SCREENTIME_STATE_DIR ?? join(homedir(), 'Library', 'Application Support', 'screentime-ingest');
-const lastHandledFile = join(stateDir, 'last-handled-request');
+async function launchctl(...args: string[]): Promise<{ code: number; out: string }> {
+	const proc = Bun.spawn(['/bin/launchctl', ...args], { stdout: 'pipe', stderr: 'pipe' });
+	const out = await new Response(proc.stdout).text();
+	return { code: await proc.exited, out };
+}
+const launchdRunning = async (label: string): Promise<boolean> =>
+	/state = running/.test((await launchctl('print', `gui/${uid}/${label}`)).out);
 
-async function poll(): Promise<void> {
-	const url = required('SCREENTIME_DASHBOARD_URL');
-	const pending = await DashboardClient.pending(url);
-	const lastHandled = await readFile(lastHandledFile, 'utf8').catch(() => null);
-	// Exactly one attempt per request: a sync that dies before it can report
-	// leaves the flag up, and re-kicking a full backup every minute is how a
-	// 1Password budget gets burned. Alex hits Refresh again to retry.
-	if (!shouldHandle(pending, lastHandled?.trim() ?? null)) return;
-	await mkdir(stateDir, { recursive: true });
-	await writeFile(lastHandledFile, pending!);
+/** Kick the backup agent and wait for it to finish (it runs the sync as its
+ * post-run hook). Resolves once the agent is idle again or after `maxMs`. */
+async function kickAndWait(label: string, maxMs: number): Promise<void> {
+	const { code } = await launchctl('kickstart', '-k', `gui/${uid}/${label}`);
+	if (code !== 0) throw new Error(`launchctl kickstart ${label} failed`);
+	const deadline = Date.now() + maxMs;
+	await sleep(5000);
+	while ((await launchdRunning(label)) && Date.now() < deadline) await sleep(5000);
+}
+
+/** One attempt at a request. Throws if it can tell the attempt failed. */
+async function attempt(req: PendingRequest, url: string): Promise<void> {
 	const label = env.SCREENTIME_BACKUP_LABEL;
 	if (!label) {
-		log('refresh requested - syncing inline');
+		log(`${req.kind} requested - syncing inline`);
 		return sync();
 	}
-	// The backup agent's post-run hook runs `sync`; don't restart a run in flight.
 	if (await launchdRunning(label)) {
-		log(`refresh requested - ${label} already running`);
-		return;
-	}
-	log(`refresh requested - kickstarting ${label}`);
-	const proc = Bun.spawn(
-		['/bin/launchctl', 'kickstart', '-k', `gui/${process.getuid?.() ?? 501}/${label}`],
-		{
-			stdout: 'inherit',
-			stderr: 'inherit'
+		log(`${req.kind} requested - ${label} already running, letting it finish`);
+	} else {
+		if (req.kind === 'rebuild') {
+			await mkdir(stateDir, { recursive: true });
+			await writeFile(skipDumpFlag, req.id);
 		}
-	);
-	if ((await proc.exited) !== 0) throw new Error(`launchctl kickstart ${label} failed`);
+		log(
+			`${req.kind} requested - kickstarting ${label}${req.kind === 'rebuild' ? ' (skip-dump flag set)' : ''}`
+		);
+		await kickAndWait(label, 20 * 60_000);
+	}
+	// The sync reports its own start/finish/error; if the flag is still up
+	// for this request it died before it could (no credential, no network).
+	const still = await DashboardClient.pending(url);
+	if (still && still.id === req.id) throw new Error('request still pending after the attempt');
+}
+
+/** One pass: ask (holding up to `holdSeconds`), plan, maybe attempt. Returns
+ * how long the caller should idle before asking again. */
+async function pass(url: string, holdSeconds: number): Promise<number> {
+	const req = await DashboardClient.pending(url, fetch, holdSeconds);
+	if (!req) return 0;
+	const state = await readState();
+	const plan = planAttempt(req, state, Date.now());
+	if (plan.action === 'wait') return Math.min(plan.ms, holdSeconds * 1000 || 30_000);
+	if (plan.action === 'exhausted') return holdSeconds * 1000 || 30_000;
+	try {
+		await attempt(req, url);
+		return 0;
+	} catch (error) {
+		const next = afterFailedAttempt(req, state, Date.now());
+		await writeState(next);
+		const retryIn = Number.isFinite(next.nextAttemptAt)
+			? `${Math.round((next.nextAttemptAt - Date.now()) / 60_000)} min`
+			: 'never (giving up on this request)';
+		log(
+			`attempt ${next.attempts} failed: ${error instanceof Error ? error.message : String(error)}; next in ${retryIn}`
+		);
+		return 1000;
+	}
+}
+
+const holdSeconds = Math.min(30, Math.max(0, Number(env.SCREENTIME_HOLD_SECONDS ?? 30) || 0));
+
+async function poll(): Promise<void> {
+	await pass(required('SCREENTIME_DASHBOARD_URL'), 0);
+}
+
+async function watch(): Promise<never> {
+	const url = required('SCREENTIME_DASHBOARD_URL');
+	log(`watching ${url} (hold ${holdSeconds}s)`);
+	for (;;) {
+		try {
+			await sleep(await pass(url, holdSeconds));
+		} catch (error) {
+			// Network/Worker hiccup: never spin, never touch a credential here.
+			log(`poll error: ${error instanceof Error ? error.message : String(error)}`);
+			await sleep(15_000);
+		}
+	}
 }
 
 const command = process.argv[2];
 try {
 	if (command === 'sync') await sync();
 	else if (command === 'poll') await poll();
+	else if (command === 'watch') await watch();
 	else {
-		console.error('usage: screentime-ingest sync | poll');
+		console.error('usage: screentime-ingest sync | watch | poll');
 		process.exit(2);
 	}
 } catch (error) {

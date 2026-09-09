@@ -10,9 +10,11 @@ Bun CLI, `screentime-ingest`, runs on the Mac that holds the snapshots: it
 parses every snapshot (gzip via `DecompressionStream`, SQLite via
 `bun:sqlite`, Biome SEGB/protobuf and binary plists via TS parsers) and
 pushes the merged per-app/per-device daily series to the Worker's D1. The
-dashboard's **Refresh** button asks that Mac for a fresh dump + rebuild: the
-Worker records the request, a 60-second launchd poll on the Mac picks it up,
-kicks the backup, and the backup's post-run hook pushes the new series.
+dashboard's **Refresh** button asks that Mac for a fresh dump + rebuild
+(**Rebuild** re-parses the snapshots already on disk): the Worker records the
+request, a long-polling daemon on the Mac picks it up within a second, kicks
+the backup, and the backup's post-run hook pushes the new series. Failed
+attempts retry after 5, 15 and 60 minutes, then wait for a new request.
 
 ## Stack
 
@@ -40,6 +42,7 @@ justfile               dev / test / check / fmt / build / logs / deploy / ingest
 ```nix
 # flake input: screentime-dashboard.url = "github:alexjmiller5/screentime-dashboard";
 services.screentime-backup.postRun = config.services.screentime-ingest.syncCommand;
+services.screentime-backup.skipDumpFlag = config.services.screentime-ingest.skipDumpFlag;
 services.screentime-ingest = {
   enable = true;
   user = "you";

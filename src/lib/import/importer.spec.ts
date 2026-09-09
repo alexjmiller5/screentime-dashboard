@@ -114,3 +114,15 @@ describe('importBackups', () => {
 		expect(result.errors[0]).toContain('2026-01-05');
 	});
 });
+
+describe('importBackups error reporting', () => {
+	it('names the file and never reports a blank reason', async () => {
+		const truncated = new Uint8Array([0x1f, 0x8b, 0x08, 0x00]); // gzip header, no body
+		const result = await importBackups(
+			fakeDir({ '2026-01-05': { 'biome-streams.tar.gz': truncated } }),
+			{ querySqlite: async () => [] }
+		);
+		expect(result.errors).toHaveLength(1);
+		expect(result.errors[0]).toMatch(/^2026-01-05\/biome-streams\.tar\.gz: .+/);
+	});
+});

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { ingestStatements, insertStatements, refreshStatus, ROWS_PER_STATEMENT } from './store';
+import {
+	clampWait,
+	ingestStatements,
+	insertStatements,
+	refreshStatus,
+	ROWS_PER_STATEMENT,
+	STALE_RUN_MS
+} from './store';
 
 describe('insertStatements', () => {
 	it('chunks rows so no statement exceeds D1 bound-parameter cap', () => {
@@ -35,7 +42,9 @@ describe('refreshStatus', () => {
 	});
 
 	it('stops being pending once the run started, failed, or imported', () => {
-		expect(refreshStatus({ refresh_requested_at: t1, refresh_started_at: t2 })).toMatchObject({
+		expect(
+			refreshStatus({ refresh_requested_at: t1, refresh_started_at: t2 }, Date.parse(t2) + 1000)
+		).toMatchObject({
 			pending: false,
 			phase: 'running'
 		});
@@ -94,5 +103,63 @@ describe('ingestStatements', () => {
 				params: ['refresh_error', 'nope']
 			}
 		]);
+	});
+});
+
+describe('request kind + long-poll wait', () => {
+	it('defaults the kind to dump and echoes a valid one', () => {
+		expect(refreshStatus({ refresh_requested_at: 'x' }).kind).toBe('dump');
+		expect(refreshStatus({ refresh_requested_at: 'x', refresh_kind: 'rebuild' }).kind).toBe(
+			'rebuild'
+		);
+		expect(refreshStatus({ refresh_requested_at: 'x', refresh_kind: 'bogus' }).kind).toBe('dump');
+	});
+	it('clamps the wait to 0..30 whole seconds', () => {
+		expect(clampWait(null)).toBe(0);
+		expect(clampWait('abc')).toBe(0);
+		expect(clampWait('-5')).toBe(0);
+		expect(clampWait('12.9')).toBe(12);
+		expect(clampWait('999')).toBe(30);
+	});
+});
+
+describe('a run that never reports back', () => {
+	const req = '2026-09-08T10:00:00.000Z';
+	const started = '2026-09-08T10:00:05.000Z';
+	const t0 = Date.parse(started);
+
+	it('stays running inside the staleness window', () => {
+		expect(
+			refreshStatus({ refresh_requested_at: req, refresh_started_at: started }, t0 + 60_000)
+		).toMatchObject({ pending: false, phase: 'running' });
+	});
+
+	it('becomes pending again once stale, so the retry path can pick it up', () => {
+		expect(
+			refreshStatus(
+				{ refresh_requested_at: req, refresh_started_at: started },
+				t0 + STALE_RUN_MS + 1
+			)
+		).toMatchObject({ pending: true, phase: 'requested' });
+	});
+
+	it('a finished or failed run never goes stale', () => {
+		const late = t0 + STALE_RUN_MS * 10;
+		expect(
+			refreshStatus(
+				{
+					refresh_requested_at: req,
+					refresh_started_at: started,
+					imported_at: '2026-09-08T10:01:00.000Z'
+				},
+				late
+			)
+		).toMatchObject({ pending: false, phase: 'idle' });
+		expect(
+			refreshStatus(
+				{ refresh_requested_at: req, refresh_started_at: started, refresh_error: 'nope' },
+				late
+			)
+		).toMatchObject({ pending: false, phase: 'failed' });
 	});
 });

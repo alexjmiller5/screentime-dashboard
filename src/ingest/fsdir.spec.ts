@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fsDir } from './fsdir';
+import { fsDir, readWithTimeout } from './fsdir';
 import type { DirLike, FileLike } from '../lib/import/importer';
 
 describe('fsDir', () => {
@@ -24,5 +25,14 @@ describe('fsDir', () => {
 			} else if (entry.kind === 'file') seen[entry.name] = [];
 		}
 		expect(seen).toEqual({ '2026-01-05': ['a.bin:1,2,3'], 'loose.txt': [] });
+	});
+});
+
+describe('readWithTimeout', () => {
+	it('gives up on a read that never completes', async () => {
+		const root = await mkdtemp(join(tmpdir(), 'fsdir-fifo-'));
+		const fifo = join(root, 'stuck');
+		execFileSync('mkfifo', [fifo]); // a FIFO with no writer blocks open/read forever
+		await expect(readWithTimeout(fifo, 200)).rejects.toThrow('read timed out');
 	});
 });
