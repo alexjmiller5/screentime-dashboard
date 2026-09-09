@@ -1,7 +1,10 @@
 // D1 access for the dashboard. The SQL builders and the refresh state machine
 // are pure (unit-tested); the exported async functions are the thin glue.
 
-import type { UsageCache, UsageRow, HourlyRow } from '../data/cache';
+import { buildUsageCache, type UsageCache, type UsageRow, type HourlyRow } from '../data/cache';
+import { retainPreviousUsage } from '../data/retained';
+import { guessLabels } from '../import/labels';
+import { readImportedScan } from './incremental';
 
 /** D1 allows 100 bound parameters per statement; every table here has <= 6 columns. */
 export const ROWS_PER_STATEMENT = 16;
@@ -32,6 +35,7 @@ export function insertStatements(
 
 export type Meta = Partial<
 	Record<
+		| 'data_updated_at'
 		| 'imported_at'
 		| 'time_zone'
 		| 'refresh_requested_at'
@@ -132,7 +136,7 @@ export interface IngestChunk {
 	hourly?: HourlyRow[];
 	/** Marks the run as started (clears a previous error). */
 	started?: boolean;
-	/** Last chunk: sweep rows from older runs and stamp imported_at. */
+	/** Successful sync marker; never deletes historical data. */
 	final?: boolean;
 	/** The run failed; recorded for the UI. */
 	error?: string;
@@ -146,40 +150,8 @@ export function ingestStatements(chunk: IngestChunk, now: string): Statement[] {
 	if (chunk.error !== undefined) {
 		stmts.push(...metaStatements({ refresh_error: chunk.error }));
 	}
-	if (chunk.devices) {
-		stmts.push(
-			...insertStatements(
-				'devices',
-				['id', 'label'],
-				Object.entries(chunk.devices),
-				'ON CONFLICT (id) DO NOTHING'
-			)
-		);
-	}
-	if (chunk.rows?.length) {
-		stmts.push(
-			...insertStatements(
-				'usage',
-				['source', 'device', 'date', 'bundle_id', 'seconds', 'run_id'],
-				chunk.rows.map((r) => [r.source, r.device, r.date, r.bundleId, r.seconds, chunk.runId]),
-				'ON CONFLICT (source, device, date, bundle_id) DO UPDATE SET seconds = excluded.seconds, run_id = excluded.run_id'
-			)
-		);
-	}
-	if (chunk.hourly?.length) {
-		stmts.push(
-			...insertStatements(
-				'hourly',
-				['device', 'date', 'hour', 'bundle_id', 'seconds', 'run_id'],
-				chunk.hourly.map((h) => [h.device, h.date, h.hour, h.bundleId, h.seconds, chunk.runId]),
-				'ON CONFLICT (device, date, hour, bundle_id) DO UPDATE SET seconds = excluded.seconds, run_id = excluded.run_id'
-			)
-		);
-	}
 	if (chunk.final) {
 		stmts.push(
-			{ sql: 'DELETE FROM usage WHERE run_id != ?', params: [chunk.runId] },
-			{ sql: 'DELETE FROM hourly WHERE run_id != ?', params: [chunk.runId] },
 			...metaStatements({
 				imported_at: now,
 				...(chunk.timeZone ? { time_zone: chunk.timeZone } : {}),
@@ -192,15 +164,15 @@ export function ingestStatements(chunk: IngestChunk, now: string): Statement[] {
 
 export async function readUsageCache(db: D1Database): Promise<UsageCache | null> {
 	const meta = await readMeta(db);
-	if (!meta.imported_at) return null;
+	if (!meta.imported_at && !meta.data_updated_at) return null;
 	const [usage, hourly, devices] = await db.batch([
 		db.prepare('SELECT source, device, date, bundle_id AS bundleId, seconds FROM usage'),
 		db.prepare('SELECT device, date, hour, bundle_id AS bundleId, seconds FROM hourly'),
 		db.prepare('SELECT id, label FROM devices')
 	]);
-	return {
+	const previous: UsageCache = {
 		version: 1,
-		importedAt: meta.imported_at,
+		importedAt: meta.data_updated_at ?? meta.imported_at!,
 		timeZone: meta.time_zone ?? 'UTC',
 		devices: Object.fromEntries(
 			(devices.results as { id: string; label: string }[]).map((d) => [d.id, d.label])
@@ -208,4 +180,14 @@ export async function readUsageCache(db: D1Database): Promise<UsageCache | null>
 		rows: usage.results as UsageRow[],
 		hourly: hourly.results as HourlyRow[]
 	};
+	const scan = await readImportedScan(db);
+	return retainPreviousUsage(
+		previous,
+		buildUsageCache({
+			...scan,
+			timeZone: previous.timeZone,
+			importedAt: previous.importedAt,
+			devices: guessLabels(scan, previous.devices)
+		})
+	);
 }

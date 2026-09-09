@@ -13,10 +13,13 @@
 		Tooltip,
 		Legend,
 		Filler,
+		type Plugin,
 		type ChartDataset
 	} from 'chart.js';
 	import 'chartjs-adapter-dayjs-4';
 	import dayjs from 'dayjs';
+	import * as MarkerTooltip from '$lib/components/ui/tooltip';
+	import { markerBucketIndex, assignLane, type Marker } from '$lib/viz/markers';
 	import type { StackedSeries, Bucket } from '$lib/viz/series';
 	import { readChartTheme, type ChartTheme } from '$lib/viz/theme';
 	import { appColor, paletteIndex, formatDuration } from '$lib/viz/format';
@@ -45,11 +48,75 @@
 		labelFor?: (key: string) => string;
 		/** Display key -> raw bundle id, for App Store icon lookup. */
 		rawFor?: Record<string, string>;
+		/** Pass markers filtered to the selected date window (before bucketing). */
+		markers?: Marker[];
 	}
-	const { data, kind, bucket = 'day', labelFor = (k) => k, rawFor = {} }: Props = $props();
+	const {
+		data,
+		kind,
+		bucket = 'day',
+		labelFor = (k) => k,
+		rawFor = {},
+		markers = []
+	}: Props = $props();
 
 	let canvas: HTMLCanvasElement;
 	let chart: Chart | null = null;
+	let markerLabels = $state<
+		{ key: number; x: number; top: number; left: number; width: number; events: Marker[] }[]
+	>([]);
+	const visibleMarkers = $derived(
+		markers.filter((m) => markerBucketIndex(m.date, data.dates, bucket) >= 0)
+	);
+	const markerTooltip = (items: { dataIndex: number }[]) =>
+		visibleMarkers
+			.filter((m) => markerBucketIndex(m.date, data.dates, bucket) === items[0]?.dataIndex)
+			.map((m) => `${m.date}: ${m.title}`);
+
+	function markerPlugin(theme: ChartTheme): Plugin {
+		let positions: typeof markerLabels = [];
+		return {
+			id: 'eventMarkers',
+			afterLayout(c) {
+				const grouped = new Map<number, Marker[]>();
+				for (const marker of visibleMarkers) {
+					const i = markerBucketIndex(marker.date, data.dates, bucket);
+					grouped.set(i, [...(grouped.get(i) ?? []), marker]);
+				}
+				const placed: { lane: number; left: number; right: number }[] = [];
+				positions = [];
+				for (const [i, events] of [...grouped].sort((a, b) => a[0] - b[0])) {
+					const x = c.scales.x.getPixelForValue(
+						bucket === 'month' ? i : dayjs(data.dates[i]).valueOf()
+					);
+					if (x < c.chartArea.left || x > c.chartArea.right) continue;
+					const width = Math.min(140, c.chartArea.right - c.chartArea.left);
+					const left = Math.max(
+						c.chartArea.left,
+						Math.min(x - width / 2, c.chartArea.right - width)
+					);
+					const lane = assignLane(placed, left - 4, left + width + 4);
+					placed.push({ lane, left: left - 4, right: left + width + 4 });
+					positions.push({ key: i, x, top: lane * 26 + 2, left, width, events });
+				}
+				// Bound chart headroom; the expandable list retains every dense marker.
+				markerLabels = positions.filter((p) => p.top < 78);
+			},
+			afterDatasetsDraw(c) {
+				c.ctx.save();
+				c.ctx.strokeStyle = theme.mutedInk;
+				c.ctx.lineWidth = 1;
+				c.ctx.setLineDash([4, 4]);
+				for (const p of positions) {
+					c.ctx.beginPath();
+					c.ctx.moveTo(p.x, p.top < 78 ? p.top + 24 : c.chartArea.top);
+					c.ctx.lineTo(p.x, c.chartArea.bottom);
+					c.ctx.stroke();
+				}
+				c.ctx.restore();
+			}
+		};
+	}
 
 	// Chart.js cost scales with DATASET count, not data volume: past this many
 	// series, per-app datasets get quadratically slow (451 series took ~5s a
@@ -232,6 +299,7 @@
 							(b.parsed.y ?? 0) - (a.parsed.y ?? 0),
 						callbacks: {
 							title: tooltipTitle,
+							beforeBody: markerTooltip,
 							label: (item: { dataset: { label?: string }; parsed: { y: number | null } }) =>
 								`${item.dataset.label}: ${formatDuration((item.parsed.y ?? 0) * 3600)}`
 						}
@@ -309,6 +377,7 @@
 							item.datasetIndex < 15 && keyAt(item) !== null,
 						callbacks: {
 							title: tooltipTitle,
+							beforeBody: markerTooltip,
 							label: (item: { datasetIndex: number; dataIndex: number }) => {
 								const key = keyAt(item);
 								return key ? `${labelFor(key)}: ${formatDuration(spanOf(item) * 3600)}` : '';
@@ -355,17 +424,57 @@
 				? rankedConfig(theme, color)
 				: perAppConfig(theme, color);
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		chart = new Chart(canvas, config as any);
+		chart = new Chart(canvas, {
+			...config,
+			options: { ...config.options, layout: { padding: { top: visibleMarkers.length ? 80 : 0 } } },
+			plugins: [markerPlugin(theme)]
+		} as any);
 	}
 
 	onMount(() => () => chart?.destroy());
 	$effect(() => {
 		void data;
 		void kind;
+		void markers;
+		void bucket;
 		render();
 	});
 </script>
 
 <div class="relative h-[320px] w-full sm:h-[420px]">
-	<canvas bind:this={canvas}></canvas>
+	<canvas
+		bind:this={canvas}
+		aria-label="Screen Time usage chart. Event markers are also listed below."
+	></canvas>
+	<MarkerTooltip.Provider>
+		{#each markerLabels as position (position.key)}
+			<MarkerTooltip.Root ignoreNonKeyboardFocus={false}>
+				<MarkerTooltip.Trigger
+					class="absolute h-6 truncate rounded bg-card px-1 text-left text-xs text-foreground outline-offset-2 focus-visible:outline-2"
+					style={`left:${position.left}px;top:${position.top}px;width:${position.width}px`}
+					aria-label={position.events.map((m) => `${m.date}: ${m.title}`).join('; ')}
+				>
+					{position.events[0].title}{position.events.length > 1
+						? ` (+${position.events.length - 1})`
+						: ''}
+				</MarkerTooltip.Trigger>
+				<MarkerTooltip.Content class="block max-h-60 max-w-xs overflow-y-auto break-words">
+					{#each position.events as marker (marker.id)}<p>{marker.date}: {marker.title}</p>{/each}
+				</MarkerTooltip.Content>
+			</MarkerTooltip.Root>
+		{/each}
+	</MarkerTooltip.Provider>
 </div>
+
+{#if visibleMarkers.length}
+	<details class="mt-2 text-xs text-muted-foreground">
+		<summary class="cursor-pointer py-2">Markers in view ({visibleMarkers.length})</summary>
+		<ul class="max-h-40 space-y-1 overflow-y-auto py-2" aria-label="Markers in view">
+			{#each [...visibleMarkers].sort((a, b) => a.date.localeCompare(b.date)) as marker (marker.id)}
+				<li class="break-words">
+					<time datetime={marker.date}>{marker.date}</time>: {marker.title}
+				</li>
+			{/each}
+		</ul>
+	</details>
+{/if}

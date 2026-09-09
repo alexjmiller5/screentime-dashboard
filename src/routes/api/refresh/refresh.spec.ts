@@ -30,3 +30,16 @@ it('a new Refresh clears a credential failure recorded before the run started', 
 	expect(await response.json()).toMatchObject({ pending: true, phase: 'requested' });
 	expect(meta.refresh_error).toBeUndefined();
 });
+
+it('an explicit new request replaces one stuck waiting after the daemon exhausted its attempts', async () => {
+	meta.refresh_requested_at = '2026-01-01T00:00:00.000Z';
+	delete meta.refresh_error;
+	await POST({
+		platform: { env: { DB: {} } },
+		request: new Request('https://example.com/api/refresh', {
+			method: 'POST',
+			body: '{"kind":"dump"}'
+		})
+	} as Parameters<typeof POST>[0]);
+	expect(meta.refresh_requested_at).not.toBe('2026-01-01T00:00:00.000Z');
+});

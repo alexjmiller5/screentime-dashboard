@@ -14,7 +14,9 @@ export const GET: RequestHandler = async ({ platform, url }) => {
 	const db = platform!.env.DB;
 	const deadline = Date.now() + clampWait(url.searchParams.get('wait')) * 1000;
 	for (;;) {
-		const { pending, requestedAt, kind } = refreshStatus(await readMeta(db));
+		const status = refreshStatus(await readMeta(db));
+		const { requestedAt, kind } = status;
+		const pending = status.pending || status.phase === 'failed';
 		if (pending || Date.now() >= deadline) {
 			return json(pending ? { pending, requestedAt, kind } : { pending }, {
 				headers: { 'cache-control': 'no-store' }

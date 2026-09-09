@@ -1,7 +1,12 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
+	import { syncBackups, type SyncResult } from '$lib/import/incremental';
+	import { filesToDir, querySqlite } from '$lib/import/browser';
 	import {
 		IconRefresh,
+		IconFlag,
+		IconFolder,
+		IconX,
 		IconRotate,
 		IconLoader2,
 		IconEdit,
@@ -28,6 +33,8 @@
 	import StackedChart from '$lib/components/StackedChart.svelte';
 	import DataTable from '$lib/components/DataTable.svelte';
 	import DevicesDialog from '$lib/components/DevicesDialog.svelte';
+	import MarkersDialog from '$lib/components/MarkersDialog.svelte';
+	import type { Marker, MarkerInput } from '$lib/viz/markers';
 	import type { UsageCache } from '$lib/data/cache';
 	import type { RefreshStatus } from '$lib/server/store';
 	import {
@@ -46,6 +53,65 @@
 	let refresh = $state<RefreshStatus | null>(null);
 	let refreshError = $state('');
 	let devicesOpen = $state(false);
+	let markersOpen = $state(false);
+	let markers = $state<Marker[]>([]);
+	let markersError = $state('');
+	async function loadMarkers(): Promise<void> {
+		const response = await fetch('/api/markers');
+		if (!response.ok) throw new Error('Could not load markers');
+		markers = ((await response.json()) as { markers: Marker[] }).markers;
+	}
+	async function saveMarker(marker: MarkerInput, id?: string): Promise<void> {
+		const response = await fetch('/api/markers', {
+			method: id ? 'PUT' : 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ ...marker, id })
+		});
+		if (!response.ok) throw new Error('Could not save marker');
+		await loadMarkers();
+	}
+	async function deleteMarker(id: string): Promise<void> {
+		const response = await fetch('/api/markers?id=' + encodeURIComponent(id), { method: 'DELETE' });
+		if (!response.ok) throw new Error('Could not delete marker');
+		await loadMarkers();
+	}
+	let folderInput: HTMLInputElement;
+	let localBusy = $state(false);
+	let localProgress = $state('');
+	let localResult = $state<SyncResult | null>(null);
+	let localController = $state<AbortController | null>(null);
+
+	async function importLocal(event: Event): Promise<void> {
+		const input = event.currentTarget as HTMLInputElement;
+		const files = Array.from(input.files ?? []);
+		input.value = '';
+		if (!files.length || localBusy) return;
+		localBusy = true;
+		localResult = null;
+		localProgress = 'Checking local backups…';
+		const controller = new AbortController();
+		localController = controller;
+		try {
+			localResult = await syncBackups(filesToDir(files), {
+				querySqlite,
+				timeZone: cache?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+				signal: controller.signal,
+				onProgress: (message) => (localProgress = message)
+			});
+		} catch (error) {
+			localResult = { imported: 0, skipped: 0, failed: 0, errors: [String(error)] };
+		} finally {
+			// A failed or cancelled run may still have committed earlier files.
+			try {
+				await loadUsage();
+			} catch (error) {
+				if (localResult)
+					localResult.errors = [...localResult.errors, `Could not reload usage: ${String(error)}`];
+			}
+			localBusy = false;
+			localController = null;
+		}
+	}
 
 	// Date range: a preset RULE ('90D'...) or '' = Custom, set by touching the
 	// slider directly - same interplay as notion-task-burndown-chart.
@@ -84,57 +150,103 @@
 		} catch {
 			/* first run */
 		}
-		await loadUsage();
+		try {
+			await loadUsage();
+		} catch (error) {
+			refreshError = String(error);
+		}
 		loading = false;
+		try {
+			await loadMarkers();
+		} catch (error) {
+			markersError = String(error);
+		}
 		// A refresh in flight from before a reload keeps being watched.
-		await loadRefresh();
-		if (refresh?.pending || refresh?.phase === 'running') watchRefresh();
+		try {
+			await loadRefresh();
+			if (refresh?.pending || refresh?.phase === 'running' || refresh?.phase === 'failed')
+				watchRefresh();
+		} catch (error) {
+			refreshError = String(error);
+		}
 	});
 
 	async function loadUsage(): Promise<void> {
 		const res = await fetch('/api/usage');
-		if (res.ok) cache = (await res.json()) as UsageCache;
+		if (res.status === 404) {
+			cache = null;
+			return;
+		}
+		if (!res.ok) throw new Error(`Usage request failed (${res.status})`);
+		cache = (await res.json()) as UsageCache;
 	}
 	async function loadRefresh(): Promise<void> {
 		const res = await fetch('/api/refresh');
-		if (res.ok) refresh = (await res.json()) as RefreshStatus;
+		if (!res.ok) throw new Error(`Refresh status failed (${res.status})`);
+		refresh = (await res.json()) as RefreshStatus;
 	}
 
 	// Refresh = ask the mac mini (via the Worker's flag) for a fresh dump +
-	// rebuild, then poll until the import lands or fails.
-	const refreshBusy = $derived(refresh?.pending === true || refresh?.phase === 'running');
+	// incremental import, then poll until the run completes or fails.
+	const refreshBusy = $derived(
+		refresh?.phase !== 'failed' && (refresh?.pending === true || refresh?.phase === 'running')
+	);
 	let watching = false;
+	let refreshTimer: ReturnType<typeof setTimeout>;
+	let disposed = false;
+	onDestroy(() => {
+		disposed = true;
+		clearTimeout(refreshTimer);
+		localController?.abort();
+	});
 	async function requestRefresh(kind: 'dump' | 'rebuild'): Promise<void> {
 		refreshError = '';
-		const res = await fetch('/api/refresh', {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ kind })
-		});
-		if (!res.ok) {
-			refreshError = `refresh request failed (${res.status})`;
-			return;
+		try {
+			const res = await fetch('/api/refresh', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ kind })
+			});
+			if (!res.ok) throw new Error(`Refresh request failed (${res.status})`);
+			refresh = (await res.json()) as RefreshStatus;
+			watchRefresh();
+		} catch (error) {
+			refreshError = String(error);
+			refresh = null;
 		}
-		refresh = (await res.json()) as RefreshStatus;
-		watchRefresh();
 	}
 	function watchRefresh(): void {
 		if (watching) return;
 		watching = true;
-		const before = cache?.importedAt;
 		const tick = async (): Promise<void> => {
-			await loadRefresh();
-			if (refresh?.phase === 'failed') {
-				refreshError = refresh.error ?? 'refresh failed';
-			} else if (refreshBusy) {
-				setTimeout(tick, 5000);
+			if (disposed) return;
+			try {
+				await loadRefresh();
+			} catch (error) {
+				refreshError = String(error);
+				refresh = null;
+			}
+			if (refreshBusy) {
+				if (!disposed) refreshTimer = setTimeout(tick, 5000);
 				return;
-			} else if (refresh?.importedAt && refresh.importedAt !== before) {
+			}
+			if (refresh?.phase === 'failed') refreshError = refresh.error ?? 'refresh failed';
+			else if (refresh?.phase === 'idle') refreshError = '';
+			// A mini run can commit some files before failing on a later file.
+			try {
 				await loadUsage();
+			} catch (error) {
+				refreshError = [refreshError, `Could not reload usage: ${String(error)}`]
+					.filter(Boolean)
+					.join(' · ');
+			}
+			if (!disposed && (!refresh || refresh.phase === 'failed')) {
+				refreshTimer = setTimeout(tick, 15000);
+				return;
 			}
 			watching = false;
 		};
-		setTimeout(tick, 3000);
+		refreshTimer = setTimeout(tick, 3000);
 	}
 	const secondsSince = (iso?: string): number =>
 		iso ? Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000)) : 0;
@@ -150,7 +262,7 @@
 		if (refresh.phase === 'requested')
 			return `Waiting for the mini to pick it up… ${secondsSince(refresh.requestedAt)}s`;
 		if (refresh.phase === 'running')
-			return `Rebuilding on the mini… ${secondsSince(refresh.startedAt)}s`;
+			return `${refresh.kind === 'rebuild' ? 'Reimporting all files' : 'Importing new files'} on the mini… ${secondsSince(refresh.startedAt)}s`;
 		return '';
 	});
 
@@ -278,7 +390,45 @@
 			</p>
 		</div>
 		<div class="flex flex-col items-end gap-1">
-			<div class="flex items-center gap-2">
+			<div class="flex flex-wrap items-center justify-end gap-2">
+				<input
+					bind:this={folderInput}
+					type="file"
+					webkitdirectory
+					multiple
+					class="hidden"
+					aria-label="Choose backup folder"
+					onchange={importLocal}
+					oncancel={() => {
+						localProgress = 'Folder selection cancelled.';
+						localResult = null;
+					}}
+				/>
+				<Button
+					variant="outline"
+					size="sm"
+					disabled={localBusy || refreshBusy}
+					onclick={() => folderInput.click()}
+					title="Import dated snapshots from a local backup folder"
+				>
+					<IconFolder size={16} /> Import local
+				</Button>
+				{#if localBusy}
+					<Button
+						variant="outline"
+						size="sm"
+						disabled={localController?.signal.aborted}
+						onclick={() => {
+							localController?.abort();
+							localProgress = 'Cancelling import…';
+						}}
+					>
+						<IconX size={16} /> Cancel
+					</Button>
+				{/if}
+				<Button variant="outline" size="sm" onclick={() => (markersOpen = true)}
+					><IconFlag size={16} /> Markers</Button
+				>
 				{#if cache}
 					<Button variant="ghost" size="sm" onclick={() => (devicesOpen = true)}>
 						<IconEdit size={16} />
@@ -290,7 +440,7 @@
 						variant="outline"
 						size="sm"
 						onclick={() => requestRefresh('rebuild')}
-						disabled={refreshBusy}
+						disabled={refresh?.phase === 'running' || localBusy}
 						title="Re-parse the snapshots already on disk (no new Screen Time dump)"
 					>
 						<IconRotate size={16} />
@@ -299,8 +449,8 @@
 				{/if}
 				<Button
 					onclick={() => requestRefresh('dump')}
-					disabled={refreshBusy}
-					title="Take a fresh Screen Time dump on the mini, then rebuild"
+					disabled={refresh?.phase === 'running' || localBusy}
+					title="Take a fresh Screen Time dump on the mini, then import new files"
 				>
 					{#if refreshBusy}
 						<IconLoader2 size={18} class="animate-spin" />
@@ -317,7 +467,31 @@
 	</header>
 
 	{#if refreshError}
-		<p class="text-sm text-destructive">Refresh failed: {refreshError}</p>
+		<p class="text-sm text-destructive">{refreshError}</p>
+	{/if}
+
+	{#if markersError}<p class="text-sm text-destructive">{markersError}</p>{/if}
+	{#if localProgress || localResult}
+		<div class="min-w-0 rounded-lg border bg-card p-4 text-sm" role="status" aria-live="polite">
+			{#if localBusy}
+				<p class="flex items-center gap-2">
+					<IconLoader2 size={16} class="shrink-0 animate-spin" /><span class="break-all"
+						>{localProgress}</span
+					>
+				</p>
+			{:else if localResult}
+				<p>
+					{localResult.imported} imported, {localResult.skipped} skipped, {localResult.failed} failed.
+				</p>
+			{:else}
+				<p>{localProgress}</p>
+			{/if}
+			{#if localResult?.errors.length}
+				<ul class="mt-2 max-h-64 list-disc space-y-1 overflow-y-auto pl-5 text-destructive">
+					{#each localResult.errors as error}<li class="break-all">{error}</li>{/each}
+				</ul>
+			{/if}
+		</div>
 	{/if}
 
 	{#if loading}
@@ -327,8 +501,9 @@
 			<IconChartBar size={40} class="text-muted-foreground" />
 			<h2 class="text-lg font-medium">No data yet</h2>
 			<p class="max-w-md text-sm text-muted-foreground">
-				Hit <strong>Refresh</strong>: the mac mini takes a fresh Screen Time dump, rebuilds the
-				daily series from every snapshot, and pushes them here.
+				Hit <strong>Refresh</strong>: the mac mini takes a fresh Screen Time dump and imports new or
+				changed backup files. Or choose
+				<strong>Import local</strong> to read a backup folder on this device.
 			</p>
 		</div>
 	{:else}
@@ -466,7 +641,13 @@
 			{#if showTable}
 				<DataTable data={bucketed} />
 			{:else}
-				<StackedChart data={bucketed} kind="stacked-bar" {bucket} {rawFor} />
+				<StackedChart
+					data={bucketed}
+					kind="stacked-bar"
+					{bucket}
+					{rawFor}
+					markers={markers.filter((m) => m.date >= dateStart && m.date <= dateEnd)}
+				/>
 			{/if}
 		</section>
 
@@ -483,5 +664,15 @@
 		devices={cache.devices}
 		onSave={saveDevices}
 		onClose={() => (devicesOpen = false)}
+	/>
+{/if}
+
+{#if markersOpen}
+	<MarkersDialog
+		open={true}
+		{markers}
+		onSave={saveMarker}
+		onDelete={deleteMarker}
+		onClose={() => (markersOpen = false)}
 	/>
 {/if}

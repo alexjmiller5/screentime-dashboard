@@ -66,7 +66,7 @@ describe('refreshStatus', () => {
 });
 
 describe('ingestStatements', () => {
-	it('a final chunk upserts rows under its run id, sweeps older runs, stamps imported_at', () => {
+	it('a final chunk upserts rows under its run id, preserves older runs, stamps imported_at', () => {
 		const stmts = ingestStatements(
 			{
 				runId: 'r2',
@@ -78,11 +78,8 @@ describe('ingestStatements', () => {
 			'2026-09-08T10:00:00.000Z'
 		);
 		const sqls = stmts.map((s) => s.sql);
-		expect(sqls[0]).toContain('INSERT INTO devices');
-		expect(sqls[0]).toContain('DO NOTHING');
-		expect(stmts[1].params).toEqual(['infocus', 'D1', '2026-09-01', 'a', 5, 'r2']);
-		expect(sqls).toContain('DELETE FROM usage WHERE run_id != ?');
-		expect(sqls).toContain('DELETE FROM hourly WHERE run_id != ?');
+		expect(sqls.some((sql) => sql.startsWith('DELETE FROM usage'))).toBe(false);
+		expect(sqls.some((sql) => sql.startsWith('DELETE FROM hourly'))).toBe(false);
 		expect(stmts.at(-1)).toEqual({
 			sql: 'DELETE FROM meta WHERE key = ?',
 			params: ['refresh_error']

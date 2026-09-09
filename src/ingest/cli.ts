@@ -30,17 +30,14 @@
 
 import { Database } from 'bun:sqlite';
 import { homedir, tmpdir } from 'node:os';
-import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { importBackups } from '../lib/import/importer';
-import { buildUsageCache } from '../lib/data/cache';
-import { guessLabels } from '../lib/import/labels';
+import { syncBackups, type FetchFn } from '../lib/import/incremental';
 import { DEFAULT_READ_TIMEOUT_MS, fsDir } from './fsdir';
 import {
 	afterFailedAttempt,
 	DashboardClient,
 	planAttempt,
-	planChunks,
 	type AttemptState,
 	type Credential,
 	type PendingRequest
@@ -91,38 +88,44 @@ async function querySqlite(dbBytes: Uint8Array, sql: string): Promise<unknown[][
 	}
 }
 
-async function sync(): Promise<void> {
+async function sync(force = false): Promise<void> {
 	const url = required('SCREENTIME_DASHBOARD_URL');
 	const backups = env.SCREENTIME_BACKUPS_DIR ?? join(homedir(), 'Documents', 'screen-time-backups');
 	const timeZone = env.SCREENTIME_TIME_ZONE ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
 	const runId = new Date().toISOString();
-	const client = new DashboardClient(url, await credential());
+	const cred = await credential();
+	const client = new DashboardClient(url, cred);
+	const fetchFn: FetchFn = (input, init) => {
+		const headers = new Headers(init?.headers);
+		headers.set('CF-Access-Client-Id', cred.clientId);
+		headers.set('CF-Access-Client-Secret', cred.clientSecret);
+		return fetch(input, { ...init, headers, redirect: 'error' });
+	};
 	await client.post({ runId, started: true });
 	try {
 		const readTimeout = Number(env.SCREENTIME_READ_TIMEOUT_MS) || DEFAULT_READ_TIMEOUT_MS;
-		const scan = await importBackups(fsDir(backups, undefined, readTimeout), {
+		const result = await syncBackups(fsDir(backups, undefined, readTimeout), {
 			querySqlite,
-			onProgress: log
-		});
-		if (scan.snapshots.length === 0) throw new Error(`no snapshots under ${backups}`);
-		for (const e of scan.errors) log(`WARN ${e}`);
-		const cache = buildUsageCache({
+			baseUrl: url,
+			fetchFn,
 			timeZone,
-			importedAt: runId,
-			devices: guessLabels(scan),
-			focusEventsByDevice: scan.focusEventsByDevice,
-			knowledgecSessionsByDevice: scan.knowledgecSessionsByDevice,
-			deviceActivityByDevice: scan.deviceActivityByDevice
+			onProgress: log,
+			force
 		});
-		const chunks = planChunks(cache, runId);
 		log(
-			`${scan.snapshots.length} snapshots -> ${cache.rows.length} rows, ${cache.hourly?.length ?? 0} hourly; ${chunks.length} chunks`
+			`${result.imported} files imported, ${result.skipped} already imported, ${result.failed} unavailable`
 		);
-		for (const chunk of chunks) await client.post(chunk);
+		for (const error of result.errors) log(`WARN ${error}`);
+		if (result.failed || result.errors.length)
+			throw new Error(
+				`${result.failed} files unavailable; imported files and previous history are preserved. ${result.errors[0] ?? ''}`
+			);
+		await client.post({ runId, final: true });
 		log('sync done');
 	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		await client.post({ runId, error: message }).catch(() => {});
+		await client
+			.post({ runId, error: error instanceof Error ? error.message : String(error) })
+			.catch(() => {});
 		throw error;
 	}
 }
@@ -146,7 +149,9 @@ async function readState(): Promise<AttemptState | null> {
 }
 async function writeState(state: AttemptState): Promise<void> {
 	await mkdir(stateDir, { recursive: true });
-	await writeFile(stateFile, JSON.stringify(state));
+	const temporary = `${stateFile}.${process.pid}.tmp`;
+	await writeFile(temporary, JSON.stringify(state));
+	await rename(temporary, stateFile);
 }
 
 async function launchctl(...args: string[]): Promise<{ code: number; out: string }> {
@@ -160,11 +165,13 @@ const launchdRunning = async (label: string): Promise<boolean> =>
 /** Kick the backup agent and wait for it to finish (it runs the sync as its
  * post-run hook). Resolves once the agent is idle again or after `maxMs`. */
 async function kickAndWait(label: string, maxMs: number): Promise<void> {
-	const { code } = await launchctl('kickstart', '-k', `gui/${uid}/${label}`);
+	const { code } = await launchctl('kickstart', `gui/${uid}/${label}`);
 	if (code !== 0) throw new Error(`launchctl kickstart ${label} failed`);
 	const deadline = Date.now() + maxMs;
 	await sleep(5000);
 	while ((await launchdRunning(label)) && Date.now() < deadline) await sleep(5000);
+	if (await launchdRunning(label))
+		throw new Error('backup still running; waiting for a later retry');
 }
 
 /** One attempt at a request. Throws if it can tell the attempt failed. */
@@ -172,19 +179,23 @@ async function attempt(req: PendingRequest, url: string): Promise<void> {
 	const label = env.SCREENTIME_BACKUP_LABEL;
 	if (!label) {
 		log(`${req.kind} requested - syncing inline`);
-		return sync();
+		return sync(req.kind === 'rebuild');
 	}
 	if (await launchdRunning(label)) {
-		log(`${req.kind} requested - ${label} already running, letting it finish`);
+		throw new Error(`${label} already running; retry after it finishes`);
 	} else {
 		if (req.kind === 'rebuild') {
 			await mkdir(stateDir, { recursive: true });
 			await writeFile(skipDumpFlag, req.id);
+			await writeFile(join(stateDir, 'rebuild'), req.id);
+		} else {
+			await unlink(skipDumpFlag).catch(() => {});
+			await unlink(join(stateDir, 'rebuild')).catch(() => {});
 		}
 		log(
 			`${req.kind} requested - kickstarting ${label}${req.kind === 'rebuild' ? ' (skip-dump flag set)' : ''}`
 		);
-		await kickAndWait(label, 20 * 60_000);
+		await kickAndWait(label, 35 * 60_000);
 	}
 	// The sync reports its own start/finish/error; if the flag is still up
 	// for this request it died before it could (no credential, no network).
@@ -196,11 +207,13 @@ async function attempt(req: PendingRequest, url: string): Promise<void> {
  * how long the caller should idle before asking again. */
 async function pass(url: string, holdSeconds: number): Promise<number> {
 	const req = await DashboardClient.pending(url, fetch, holdSeconds);
-	if (!req) return 0;
+	if (!req) return holdSeconds > 0 ? 0 : 1000;
 	const state = await readState();
 	const plan = planAttempt(req, state, Date.now());
 	if (plan.action === 'wait') return Math.min(plan.ms, holdSeconds * 1000 || 30_000);
 	if (plan.action === 'exhausted') return holdSeconds * 1000 || 30_000;
+	// Persist before starting: process termination must not reset the attempt budget.
+	await writeState(afterFailedAttempt(req, state, Date.now()));
 	try {
 		await attempt(req, url);
 		return 0;
@@ -239,8 +252,12 @@ async function watch(): Promise<never> {
 
 const command = process.argv[2];
 try {
-	if (command === 'sync') await sync();
-	else if (command === 'poll') await poll();
+	if (command === 'sync') {
+		const flag = join(stateDir, 'rebuild');
+		const rebuild = await readFile(flag, 'utf8').catch(() => '');
+		if (rebuild) await unlink(flag).catch(() => {});
+		await sync(Boolean(rebuild) || process.argv.includes('--force'));
+	} else if (command === 'poll') await poll();
 	else if (command === 'watch') await watch();
 	else {
 		console.error('usage: screentime-ingest sync | watch | poll');
