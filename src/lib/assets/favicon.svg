@@ -1,10 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-	<style>
-		.frame { stroke: #0b0b0b; }
-		@media (prefers-color-scheme: dark) { .frame { stroke: #ffffff; } }
-	</style>
-	<rect class="frame" x="5" y="1.5" width="14" height="21" rx="3.5" fill="none" stroke="#0b0b0b" stroke-width="2" />
-	<rect x="8" y="7" width="2.4" height="11.5" rx="1.2" fill="#2a78d6" />
-	<rect x="10.9" y="10" width="2.4" height="8.5" rx="1.2" fill="#2a78d6" />
-	<rect x="13.8" y="13" width="2.4" height="5.5" rx="1.2" fill="#2a78d6" />
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+	<!-- screentime: phone screen carrying a falling usage bar chart.
+	     Self-contained tile (no prefers-color-scheme): the same artwork is the
+	     browser tab icon and, rendered full-bleed by scripts/generate-icons.sh,
+	     the homescreen icon. -->
+	<rect width="64" height="64" rx="14" fill="#2a78d6" />
+	<rect x="18" y="9" width="28" height="46" rx="6.5" fill="#ffffff" />
+	<rect x="29" y="13" width="6" height="1.8" rx="0.9" fill="#2a78d6" />
+	<rect x="22.5" y="20" width="5" height="27" rx="2.5" fill="#2a78d6" />
+	<rect x="29.5" y="27" width="5" height="20" rx="2.5" fill="#2a78d6" />
+	<rect x="36.5" y="34" width="5" height="13" rx="2.5" fill="#2a78d6" />
 </svg>

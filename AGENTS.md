@@ -157,8 +157,13 @@ adapter and compiler options live in `vite.config.ts` inside the
 ## Site basics
 
 - Every route renders `<Seo title description>`.
-- Favicon (`src/lib/assets/favicon.svg`) is purpose-driven for THIS site;
-  `scripts/generate-icons.sh` renders the homescreen PNG set from it
+- Favicon (`src/lib/assets/favicon.svg`) is purpose-driven for THIS site: a
+  full-bleed blue tile carrying a phone with usage bars, so the tab icon and
+  the homescreen icon are one piece of artwork. Regenerate the PNG set with
+  `scripts/generate-icons.sh '#2a78d6' 1` (tile color + full-bleed scale;
+  the defaults inset a bare glyph on white). Keep the favicon's colors
+  unconditional - qlmanage rasterizes in dark appearance, so a
+  `prefers-color-scheme` flip renders invisible ink
   (`static/icon-192.png`, `icon-512.png`, `apple-touch-icon.png`);
   `static/manifest.webmanifest` + the iOS metas in `src/app.html` make it an
   installable homescreen app (Access bypass for those paths via `--pwa`).
