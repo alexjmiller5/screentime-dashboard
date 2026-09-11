@@ -73,6 +73,12 @@ ingest` fills miniflare's D1 from this Mac's backups folder.
   `.env.tpl` is intentionally empty; CI deploy creds are op:// refs in
   `.github/workflows/deploy.yml` only (the CI Cloudflare token carries
   Workers Scripts + D1 Write, minted by `scripts/provision.py`).
+- **The mini's ingest is a nix-config flake pin, the Worker is CI-deployed** -
+  they version-skew independently. Any change to the refresh protocol
+  (`/api/refresh/job` stages, the pending flag's lifecycle) is only half
+  shipped until `nix flake update screentime-dashboard` + a mini rebuild:
+  an old ingest syncs fine but never confirms, so the site sits on
+  "waiting for the mini to confirm" and the request retries every 5 min.
 - **Installed on the mini via nix** (`flake.nix`: `packages.default` =
   screentime-ingest, `darwinModules.default` = the watch agent + the
   `syncCommand` handed to `services.screentime-backup.postRun`). Config is
