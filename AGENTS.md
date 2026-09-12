@@ -95,7 +95,9 @@ ingest` fills miniflare's D1 from this Mac's backups folder.
   `SCREENTIME_BACKUP_LABEL`, `SCREENTIME_TIME_ZONE`). Native enrollment is the
   default; optional token/command and proxy headers are generic seams.
   The watcher and backup hook run as the same desktop user with access to
-  that user's Keychain. Replacement machines enroll anew; logout revokes
+  that user's Keychain. Run enrollment in a desktop terminal: SSH can reject
+  Keychain writes with `User interaction is not allowed`, even with `--no-browser`.
+  Replacement machines enroll anew; logout revokes
   first and only removes local auth after success. Gotchas: `bun:sqlite`'s `deserialize`
   rejects some larger knowledgeC images, so the CLI opens a temp file; a
   bad file only loses that file, never the snapshot (errors are per file).
