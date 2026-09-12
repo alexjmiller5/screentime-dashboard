@@ -441,6 +441,27 @@
 		};
 	}
 
+	const hourPatterns = new Map<string, CanvasPattern>();
+	function hourPattern(color: string): CanvasPattern | string {
+		const existing = hourPatterns.get(color);
+		if (existing) return existing;
+		const tile = document.createElement('canvas');
+		tile.width = tile.height = 8;
+		const ctx = tile.getContext('2d')!;
+		ctx.fillStyle = color;
+		ctx.globalAlpha = 0.2;
+		ctx.fillRect(0, 0, 8, 8);
+		ctx.globalAlpha = 1;
+		ctx.strokeStyle = color;
+		ctx.beginPath();
+		ctx.moveTo(0, 8);
+		ctx.lineTo(8, 0);
+		ctx.stroke();
+		const pattern = ctx.createPattern(tile, 'repeat');
+		if (pattern) hourPatterns.set(color, pattern);
+		return pattern ?? color;
+	}
+
 	function timelineConfig(theme: ChartTheme, color: (key: string) => string) {
 		const value = timeline!;
 		const keys = [...new Set(value.points.map((p) => p.key))];
@@ -451,8 +472,11 @@
 					{
 						data: value.points,
 						grouped: false,
-						backgroundColor: value.points.map((p) => color(p.key)),
-						borderWidth: 0,
+						backgroundColor: value.points.map((p) =>
+							p.resolution === 'hour' ? hourPattern(color(p.key)) : color(p.key)
+						),
+						borderColor: value.points.map((p) => color(p.key)),
+						borderWidth: value.points.map((p) => (p.resolution === 'hour' ? 1 : 0)),
 						borderRadius: 1,
 						borderSkipped: false,
 						minBarLength: 1,
@@ -532,7 +556,7 @@
 							},
 							label: (item: { dataIndex: number }) => {
 								const p = value.points[item.dataIndex];
-								return `${p.key}: ${formatDuration(p.seconds)} · ${deviceLabel(p.device)}${p.estimated ? ' · estimated' : ''}`;
+								return `${p.key}: ${formatDuration(p.seconds)} · ${deviceLabel(p.device)}${p.resolution === 'hour' ? ' · hour total; exact times unavailable' : p.estimated ? ' · estimated' : ''}`;
 							},
 							labelPointStyle: (item: { dataIndex: number }) => ({
 								pointStyle: pointStyle(value.points[item.dataIndex].key),

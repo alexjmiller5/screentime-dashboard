@@ -64,12 +64,19 @@ describe('classifyDeviceActivityFile', () => {
 		).toEqual({ device: 'BBBBBBBB-1111-2222-3333-444444444444', cocoaSeconds: 809409600 });
 	});
 
-	it('ignores Hourly, Local, and sync-state files', () => {
+	it('extracts Cloud Hourly segments with their granularity marker', () => {
 		expect(
 			classifyDeviceActivityFile(
 				'com.apple.DeviceActivity/Cloud/u/BBBBBBBB-1111-2222-3333-444444444444/Hourly/ActivitySegments/809409600.0.plist'
 			)
-		).toBeNull();
+		).toEqual({
+			device: 'BBBBBBBB-1111-2222-3333-444444444444',
+			cocoaSeconds: 809409600,
+			hourly: true
+		});
+	});
+
+	it('ignores Local and sync-state files', () => {
 		expect(
 			classifyDeviceActivityFile(
 				'com.apple.DeviceActivity/Local/Daily/ActivitySegments/809409600.0.plist'

@@ -9,7 +9,14 @@ import {
 	type UsageSession
 } from './intervals';
 import type { FocusEvent } from './infocus';
-import { segmentsToRows, type DeviceSegment } from './deviceactivity';
+import {
+	segmentsToRows,
+	segmentsToWebsiteHours,
+	type DeviceSegment,
+	type WebsiteHour
+} from './deviceactivity';
+
+export type { WebsiteHour } from './deviceactivity';
 
 export interface UsageRow {
 	source: 'infocus' | 'knowledgec' | 'screentime';
@@ -39,6 +46,8 @@ export interface UsageCache {
 	hourly?: HourlyRow[];
 	/** Focus-derived sessions from committed originals, with estimated intervals flagged. */
 	sessions?: FocusSession[];
+	/** Website totals attributed to real DeviceActivity hour windows. */
+	websiteHours?: WebsiteHour[];
 }
 
 export interface FocusSession extends UsageSession {
@@ -59,7 +68,7 @@ export interface BuildInput {
 	focusEventsByDevice: Record<string, FocusEvent[]>;
 	/** All knowledgeC sessions per device, across snapshots (dupes ok). */
 	knowledgecSessionsByDevice: Record<string, UsageSession[]>;
-	/** DeviceActivity daily segments per device (already deduped by day). */
+	/** DeviceActivity daily and hourly segments, deduped by window and granularity. */
 	deviceActivityByDevice?: Record<string, DeviceSegment[]>;
 }
 
@@ -118,6 +127,7 @@ export function buildUsageCache(input: BuildInput): UsageCache {
 			a.source.localeCompare(b.source)
 	);
 
+	const websiteHours = segmentsToWebsiteHours(input.deviceActivityByDevice ?? {});
 	return {
 		version: 1,
 		importedAt: input.importedAt,
@@ -125,6 +135,7 @@ export function buildUsageCache(input: BuildInput): UsageCache {
 		devices: input.devices,
 		rows: usageRows,
 		hourly,
-		sessions
+		sessions,
+		...(websiteHours.length ? { websiteHours } : {})
 	};
 }

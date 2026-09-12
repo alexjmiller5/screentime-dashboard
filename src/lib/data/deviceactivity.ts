@@ -17,7 +17,17 @@ export interface ActivityEntry {
 
 export interface DeviceSegment {
 	cocoaSeconds: number;
+	/** Present only for one-hour aggregate segments. */
+	hourly?: true;
 	entries: ActivityEntry[];
+}
+
+export interface WebsiteHour {
+	device: string;
+	bundleId: string;
+	startMs: number;
+	endMs: number;
+	seconds: number;
 }
 
 type Dict = { [key: string]: PlistValue };
@@ -25,6 +35,10 @@ const asDict = (v: PlistValue): Dict | null =>
 	v && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Uint8Array)
 		? (v as Dict)
 		: null;
+
+export function isActivitySegment(plist: PlistValue): boolean {
+	return Array.isArray(asDict(asDict(plist)?.value ?? null)?.categoryActivities);
+}
 
 export function extractSegmentActivities(plist: PlistValue): ActivityEntry[] {
 	const categories = asDict(asDict(plist)?.value ?? null)?.categoryActivities;
@@ -73,6 +87,7 @@ export function segmentsToRows(
 	for (const [device, segments] of Object.entries(segmentsByDevice)) {
 		const sorted = [...segments].sort((a, b) => a.cocoaSeconds - b.cocoaSeconds);
 		for (const segment of sorted) {
+			if (segment.hourly) continue;
 			const date = dateInTz((segment.cocoaSeconds + COCOA_EPOCH_S) * 1000, timeZone);
 			for (const entry of segment.entries) {
 				rows.push({
@@ -85,5 +100,35 @@ export function segmentsToRows(
 			}
 		}
 	}
+	return rows;
+}
+
+export function segmentsToWebsiteHours(
+	segmentsByDevice: Record<string, DeviceSegment[]>
+): WebsiteHour[] {
+	const rows: WebsiteHour[] = [];
+	for (const [device, segments] of Object.entries(segmentsByDevice)) {
+		for (const segment of segments) {
+			if (!segment.hourly) continue;
+			const startMs = (segment.cocoaSeconds + COCOA_EPOCH_S) * 1000;
+			for (const entry of segment.entries) {
+				const seconds = Math.round(entry.seconds);
+				if (!entry.key.startsWith('web:') || seconds <= 0) continue;
+				rows.push({
+					device,
+					bundleId: entry.key,
+					startMs,
+					endMs: startMs + 60 * 60 * 1000,
+					seconds
+				});
+			}
+		}
+	}
+	rows.sort(
+		(a, b) =>
+			a.startMs - b.startMs ||
+			a.device.localeCompare(b.device) ||
+			a.bundleId.localeCompare(b.bundleId)
+	);
 	return rows;
 }

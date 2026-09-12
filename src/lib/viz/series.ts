@@ -209,6 +209,8 @@ const BROWSERS = new Set([
 	'org.mozilla.firefox'
 ]);
 
+export const isBrowser = (bundleId: string): boolean => BROWSERS.has(bundleId.toLowerCase());
+
 /**
  * One honest combined stack of apps AND websites: website time happens
  * INSIDE browsers, so per (device, day) browsers are scaled down to just the
@@ -217,26 +219,30 @@ const BROWSERS = new Set([
  * WKWebView apps - not browsers - can still slightly double-count their host
  * app; small and accepted.)
  */
-export function combineUsage(apps: UsageRow[], webs: UsageRow[]): UsageRow[] {
+export function combineUsage<T extends Pick<UsageRow, 'device' | 'date' | 'bundleId' | 'seconds'>>(
+	apps: T[],
+	webs: T[],
+	groupOf = (r: T): string => `${r.device}|${r.date}`
+): T[] {
 	const webTotal = new Map<string, number>();
 	for (const r of webs) {
-		const key = `${r.device}|${r.date}`;
+		const key = groupOf(r);
 		webTotal.set(key, (webTotal.get(key) ?? 0) + r.seconds);
 	}
 	const browserTotal = new Map<string, number>();
 	for (const r of apps) {
-		if (!BROWSERS.has(r.bundleId.toLowerCase())) continue;
-		const key = `${r.device}|${r.date}`;
+		if (!isBrowser(r.bundleId)) continue;
+		const key = groupOf(r);
 		browserTotal.set(key, (browserTotal.get(key) ?? 0) + r.seconds);
 	}
 
-	const out: UsageRow[] = [];
+	const out: T[] = [];
 	for (const r of apps) {
-		if (!BROWSERS.has(r.bundleId.toLowerCase())) {
+		if (!isBrowser(r.bundleId)) {
 			out.push(r);
 			continue;
 		}
-		const key = `${r.device}|${r.date}`;
+		const key = groupOf(r);
 		const total = browserTotal.get(key)!;
 		const covered = Math.min(webTotal.get(key) ?? 0, total);
 		const residual = Math.round(r.seconds * ((total - covered) / total));

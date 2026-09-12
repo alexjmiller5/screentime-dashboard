@@ -10,7 +10,7 @@ import { untar } from '../data/tar';
 import { parseBplist } from '../data/bplist';
 import {
 	extractSegmentActivities,
-	type ActivityEntry,
+	isActivitySegment,
 	type DeviceSegment
 } from '../data/deviceactivity';
 import { gunzip } from './gunzip';
@@ -43,8 +43,8 @@ export interface ImportResult {
 	errors: string[];
 	focusEventsByDevice: Record<string, FocusEvent[]>;
 	knowledgecSessionsByDevice: Record<string, UsageSession[]>;
-	/** One segment per (device, day); later snapshots overwrite earlier
-	 * (their copy of a still-open day is more complete). */
+	/** One segment per (device, window, granularity); later snapshots overwrite
+	 * earlier copies, including empty replacements. */
 	deviceActivityByDevice: Record<string, DeviceSegment[]>;
 }
 
@@ -66,9 +66,9 @@ export async function importBackups(dir: DirLike, options: ImportOptions): Promi
 		knowledgecSessionsByDevice: {},
 		deviceActivityByDevice: {}
 	};
-	// (device, day) -> entries; snapshots walk in chronological order, so a
-	// later snapshot's copy of the same day overwrites the earlier partial one.
-	const segmentEntries = new Map<string, ActivityEntry[]>();
+	// Snapshots walk chronologically, so a later copy of the same daily or
+	// hourly window replaces an earlier partial copy. Granularities stay distinct.
+	const segments = new Map<string, { device: string; segment: DeviceSegment }>();
 
 	const snapshotDirs: DirLike[] = [];
 	for await (const entry of dir.values()) {
@@ -101,14 +101,24 @@ export async function importBackups(dir: DirLike, options: ImportOptions): Promi
 					const sessions = extractAppUsageSessions(rows);
 					(result.knowledgecSessionsByDevice[KNOWLEDGEC_DEVICE] ??= []).push(...sessions);
 				} else if (entry.name === 'device-activity.tar.gz') {
+					const parsed: { key: string; device: string; segment: DeviceSegment }[] = [];
 					for (const file of untar(await gunzip(await readEntry(entry)))) {
 						const classified = classifyDeviceActivityFile(file.name);
 						if (!classified) continue;
-						const entries = extractSegmentActivities(parseBplist(file.data));
-						if (entries.length > 0) {
-							segmentEntries.set(`${classified.device}|${classified.cocoaSeconds}`, entries);
-						}
+						const plist = parseBplist(file.data);
+						if (!isActivitySegment(plist)) throw new Error('unrecognized ActivitySegment shape');
+						const segment: DeviceSegment = {
+							cocoaSeconds: classified.cocoaSeconds,
+							...(classified.hourly ? { hourly: true } : {}),
+							entries: extractSegmentActivities(plist)
+						};
+						parsed.push({
+							key: `${classified.device}|${classified.cocoaSeconds}|${classified.hourly ? 'hourly' : 'daily'}`,
+							device: classified.device,
+							segment
+						});
 					}
+					for (const { key, device, segment } of parsed) segments.set(key, { device, segment });
 				}
 			} catch (error) {
 				result.errors.push(`${name}/${entry.name}: ${describe(error)}`);
@@ -116,12 +126,7 @@ export async function importBackups(dir: DirLike, options: ImportOptions): Promi
 		}
 	}
 
-	for (const [key, entries] of segmentEntries) {
-		const [device, cocoa] = key.split('|');
-		(result.deviceActivityByDevice[device] ??= []).push({
-			cocoaSeconds: Number(cocoa),
-			entries
-		});
-	}
+	for (const { device, segment } of segments.values())
+		(result.deviceActivityByDevice[device] ??= []).push(segment);
 	return result;
 }

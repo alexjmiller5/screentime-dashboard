@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { parseBplist } from './bplist';
-import { extractSegmentActivities, segmentsToRows } from './deviceactivity';
+import { extractSegmentActivities, segmentsToRows, segmentsToWebsiteHours } from './deviceactivity';
 
 const segment = parseBplist(
 	new Uint8Array(readFileSync(new URL('./fixtures/segment.bplist', import.meta.url)))
@@ -62,6 +62,63 @@ describe('segmentsToRows', () => {
 				date: '2026-08-26',
 				bundleId: 'com.example.browser.ios',
 				seconds: 3594
+			}
+		]);
+	});
+
+	it('keeps hourly aggregates out of daily rows', () => {
+		expect(
+			segmentsToRows(
+				{
+					'device-1': [
+						{ cocoaSeconds: 809409600, entries: [{ key: 'web:daily.test', seconds: 90 }] },
+						{
+							cocoaSeconds: 809409600,
+							hourly: true,
+							entries: [{ key: 'web:hourly.test', seconds: 45 }]
+						}
+					]
+				},
+				'UTC'
+			)
+		).toEqual([
+			{
+				source: 'screentime',
+				device: 'device-1',
+				date: '2026-08-26',
+				bundleId: 'web:daily.test',
+				seconds: 90
+			}
+		]);
+	});
+});
+
+describe('segmentsToWebsiteHours', () => {
+	it('emits positive rounded web totals over the actual full-hour window only', () => {
+		const startMs = Date.parse('2026-08-26T04:00:00Z');
+		expect(
+			segmentsToWebsiteHours({
+				'device-1': [
+					{ cocoaSeconds: 809409600, entries: [{ key: 'web:daily.test', seconds: 90 }] },
+					{
+						cocoaSeconds: 809409600,
+						hourly: true,
+						entries: [
+							{ key: 'web:hourly.test', seconds: 44.6 },
+							{ key: 'com.example.browser', seconds: 50 },
+							{ key: 'web:zero.test', seconds: 0.4 },
+							{ key: 'web:negative.test', seconds: -1 }
+						]
+					}
+				]
+			})
+		).toEqual([
+			{
+				device: 'device-1',
+				bundleId: 'web:hourly.test',
+				startMs,
+				endMs: startMs + 60 * 60 * 1000,
+				seconds: 45
 			}
 		]);
 	});

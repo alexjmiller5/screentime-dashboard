@@ -23,7 +23,7 @@ export const GET: RequestHandler = async ({ platform, url }) => {
 		typeof caches === 'undefined'
 			? undefined
 			: await caches
-					.open(timing ? 'screentime-sessions-v1' : 'screentime-summary-v2')
+					.open(timing ? 'screentime-sessions-v1' : 'screentime-summary-v3')
 					.catch(() => undefined);
 	const keyUrl = new URL('/api/usage', url);
 	keyUrl.searchParams.set('version', version ?? 'empty');

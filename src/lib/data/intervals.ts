@@ -92,11 +92,15 @@ export interface HourlyUsage {
 /** Sessions sliced into per-hour buckets (local time) - feeds the day grid. */
 export function deriveHourlyUsage(events: FocusEvent[], options: DeriveOptions): HourlyUsage[] {
 	const maxSessionMs = options.maxSessionMs ?? 4 * 60 * 60 * 1000;
-	const parts = makeDateParts(options.timeZone);
+	return aggregateHourlySessions(sessionsFromEvents(events, maxSessionMs), options.timeZone);
+}
+
+export function aggregateHourlySessions(sessions: UsageSession[], timeZone: string): HourlyUsage[] {
+	const parts = makeDateParts(timeZone);
 	const HOUR_MS = 3_600_000;
 
 	const totals = new Map<string, number>();
-	for (const { bundleId, startMs, endMs } of sessionsFromEvents(events, maxSessionMs)) {
+	for (const { bundleId, startMs, endMs } of sessions) {
 		let cursor = startMs;
 		while (cursor < endMs) {
 			const { date, msIntoDay } = parts(cursor);
