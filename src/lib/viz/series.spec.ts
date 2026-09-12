@@ -3,6 +3,7 @@ import {
 	filterRows,
 	dailyByApp,
 	topApps,
+	appOptions,
 	dateRange,
 	electUsage,
 	combineUsage,
@@ -88,6 +89,45 @@ describe('dailyByApp', () => {
 			appName
 		);
 		expect(series).toEqual([{ key: 'Chrome', data: [150] }]);
+	});
+});
+
+describe('appOptions', () => {
+	it('retains daily-only website totals without inventing timing or adding parallel measurements', () => {
+		const daily = [row('2026-01-01', 'web:video.example', 7200), row('2026-01-01', 'com.a', 3600)];
+		const hourly = [row('2026-01-01', 'com.a', 1800), row('2026-01-01', 'com.tiny', 8)];
+		const timed = appOptions(daily, hourly, hourly);
+		expect(timed.find((r) => r.bundleId === 'web:video.example')).toMatchObject({
+			seconds: 7200,
+			available: false
+		});
+		expect(timed.find((r) => r.bundleId === 'com.a')).toMatchObject({
+			seconds: 1800,
+			available: true
+		});
+		const totals = appOptions(daily, hourly, daily);
+		expect(totals.find((r) => r.bundleId === 'web:video.example')).toMatchObject({
+			seconds: 7200,
+			available: true
+		});
+		expect(totals.find((r) => r.bundleId === 'com.a')).toMatchObject({
+			seconds: 3600,
+			available: true
+		});
+		expect(totals.find((r) => r.bundleId === 'com.tiny')).toMatchObject({
+			seconds: null,
+			available: false
+		});
+	});
+
+	it('keeps the filtered daily total while timing is loading and merges display identities', () => {
+		const daily = [
+			row('2026-01-01', 'com.google.Chrome', 60),
+			row('2026-01-01', 'com.google.chrome.ios', 120)
+		];
+		expect(appOptions(daily, [], [], appName)).toEqual([
+			{ bundleId: 'Chrome', raw: 'com.google.chrome.ios', seconds: 180, available: false }
+		]);
 	});
 });
 

@@ -47,6 +47,7 @@
 		filterRows,
 		dailyByApp,
 		topApps,
+		appOptions,
 		electUsage,
 		combineUsage,
 		bucketize,
@@ -527,16 +528,13 @@
 	);
 	const avgPerDay = $derived(totalSeconds / Math.max(1, dateRange(dateStart, dateEnd).length));
 	const ranked = $derived(topApps(rows, Infinity, appName));
-	const availableKeys = $derived(new Set(ranked.map((r) => r.bundleId)));
-	const secondsByKey = $derived(new Map(ranked.map((r) => [r.bundleId, r.seconds])));
 	const candidates = $derived(
-		topApps(
-			[...totalRows, ...hourRows.map((r) => ({ ...r, source: 'infocus' as const }))],
-			Infinity,
+		appOptions(
+			totalRows,
+			hourRows.map((r) => ({ ...r, source: 'infocus' as const })),
+			rows,
 			appName
 		)
-			.map((r) => ({ ...r, seconds: secondsByKey.get(r.bundleId) ?? 0 }))
-			.sort((a, b) => b.seconds - a.seconds)
 	);
 	// Display key -> raw bundle id, for App Store icon lookups in the chart.
 	const rawFor = $derived(Object.fromEntries(candidates.map((t) => [t.bundleId, t.raw])));
@@ -773,11 +771,29 @@
 					<div class="sticky top-0 z-10 -mx-1 -mt-1 mb-1 bg-popover px-1 pt-1 pb-1">
 						<Input
 							bind:value={pickQuery}
-							placeholder="Search {ranked.length} apps & sites"
+							placeholder="Search {candidates.length} apps & sites"
 							class="h-8"
-							onkeydown={(e: KeyboardEvent) => e.stopPropagation()}
+							onkeydown={(e: KeyboardEvent) => {
+								if (e.key !== 'Escape') e.stopPropagation();
+							}}
 						/>
 					</div>
+					{#if view !== 'totals'}
+						<p class="px-2 py-1 text-xs text-muted-foreground">
+							{#if view === 'timeline' && sessionData?.key !== sessionKey}
+								{sessionError
+									? 'Session history could not load. Daily totals are shown below.'
+									: 'Loading time-of-day detail. Daily totals are shown below.'}
+							{:else}
+								Gray entries retain their daily totals. Time-of-day detail is unavailable in this
+								view.
+							{/if}
+						</p>
+						<DropdownMenu.Item onclick={() => (view = 'totals')}
+							>Show daily totals</DropdownMenu.Item
+						>
+						<DropdownMenu.Separator />
+					{/if}
 					<DropdownMenu.Item
 						disabled={picked.length === 0}
 						onclick={() => {
@@ -793,7 +809,7 @@
 					{#each pickCandidates as t (t.bundleId)}
 						{@const icon = iconUrl(t.bundleId, t.raw)}
 						<DropdownMenu.CheckboxItem
-							disabled={!availableKeys.has(t.bundleId)}
+							disabled={!t.available}
 							checked={picked.includes(t.bundleId)}
 							closeOnSelect={false}
 							onCheckedChange={() => togglePick(t.bundleId)}
@@ -804,9 +820,20 @@
 								<IconApps size={16} class="text-muted-foreground" />
 							{/if}
 							<!-- full name (wraps, never truncates) + time in the selected range -->
-							<span class="min-w-0 flex-1 break-all">{t.bundleId}</span>
+							<span class="min-w-0 flex-1 break-all">
+								{t.bundleId}
+								{#if !t.available && t.seconds !== null}
+									<span class="block text-xs text-muted-foreground">
+										{view === 'timeline' && sessionData?.key !== sessionKey
+											? sessionError
+												? 'Daily total · timing failed'
+												: 'Daily total · timing loading'
+											: 'Daily total'}
+									</span>
+								{/if}
+							</span>
 							<span class="text-xs text-muted-foreground tabular-nums">
-								{formatDuration(t.seconds)}
+								{t.seconds === null ? 'Unavailable' : formatDuration(t.seconds)}
 							</span>
 						</DropdownMenu.CheckboxItem>
 					{:else}

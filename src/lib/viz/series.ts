@@ -145,6 +145,27 @@ export function topApps(
 		.slice(0, n);
 }
 
+/** Picker values follow the chart when available; daily-only history retains
+ * its recorded total instead of turning missing timing into zero usage. */
+export function appOptions(
+	dailyRows: UsageRow[],
+	hourRows: UsageRow[],
+	viewRows: UsageRow[],
+	keyOf: (bundleId: string) => string = (b) => b
+): { bundleId: string; raw: string; seconds: number | null; available: boolean }[] {
+	const daily = new Map(topApps(dailyRows, Infinity, keyOf).map((r) => [r.bundleId, r.seconds]));
+	const current = new Map(topApps(viewRows, Infinity, keyOf).map((r) => [r.bundleId, r.seconds]));
+	return topApps([...dailyRows, ...hourRows], Infinity, keyOf)
+		.map((r) => ({
+			...r,
+			seconds: current.get(r.bundleId) ?? daily.get(r.bundleId) ?? null,
+			available: current.has(r.bundleId)
+		}))
+		.sort(
+			(a, b) => Number(b.available) - Number(a.available) || (b.seconds ?? 0) - (a.seconds ?? 0)
+		);
+}
+
 const SOURCE_RANK: Record<UsageRow['source'], number> = {
 	screentime: 0, // Apple's official aggregates - matches the Settings pane
 	infocus: 1, // our focus-session derivation - fills Screen Time's gaps
