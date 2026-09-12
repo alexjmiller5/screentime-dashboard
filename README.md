@@ -93,12 +93,15 @@ services.screentime-ingest = {
 };
 ```
 
-After activating the module, run `screentime-ingest login`. Open its browser
+After activating the module, run `screentime-ingest login` in a terminal on
+the Mac's desktop session. Open its browser
 link, match the approval code, and approve the uploader. On a headless Mac,
 use `screentime-ingest login --no-browser` and open the printed link on your
 other device. The credential stays in the uploader's macOS Keychain; the
 watcher and backup hook must run as that same desktop user with its login
 Keychain unlocked. Native Keychain prompts belong on that user's desktop.
+An SSH session can fail with `User interaction is not allowed`; use Screen
+Sharing to run enrollment in the desktop terminal, even with `--no-browser`.
 
 Use **Upload devices** in the dashboard to revoke a lost or replaced uploader.
 `screentime-ingest logout` revokes the current credential before removing it
