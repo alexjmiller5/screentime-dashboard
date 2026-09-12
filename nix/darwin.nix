@@ -10,8 +10,8 @@
 #     = config.services.screentime-ingest.skipDumpFlag) so the agent only
 #     runs the hook. Without a backup agent the daemon runs the sync itself.
 #   - `sync` (the exported syncCommand) parses every snapshot in backupsDir
-#     and pushes the series to the dashboard through Cloudflare Access with a
-#     service token, read at run time from `credentialCommand`.
+#     and pushes through the device API using native enrollment. An optional
+#     credentialCommand supports externally managed credentials.
 self:
 {
   config,
@@ -27,13 +27,14 @@ let
   # The CLI with this machine's wiring baked in (env is the CLI's config seam).
   wrapper = pkgs.writeShellScriptBin "screentime-ingest" ''
     export SCREENTIME_DASHBOARD_URL=${lib.escapeShellArg cfg.url}
-    export SCREENTIME_DASHBOARD_CREDENTIAL_COMMAND=${lib.escapeShellArg cfg.credentialCommand}
+    ${lib.optionalString (cfg.credentialCommand != "") "export SCREENTIME_DASHBOARD_CREDENTIAL_COMMAND=${lib.escapeShellArg cfg.credentialCommand}"}
     export SCREENTIME_BACKUPS_DIR=${lib.escapeShellArg cfg.backupsDir}
     export SCREENTIME_STATE_DIR=${lib.escapeShellArg stateDir}
     export SCREENTIME_HOLD_SECONDS=${toString cfg.holdSeconds}
     ${lib.optionalString (cfg.backupLabel != "") "export SCREENTIME_BACKUP_LABEL=${lib.escapeShellArg cfg.backupLabel}"}
     ${lib.optionalString (cfg.timeZone != null) "export SCREENTIME_TIME_ZONE=${lib.escapeShellArg cfg.timeZone}"}
-    exec ${pkg}/bin/screentime-ingest "$@" >> ${lib.escapeShellArg logFile} 2>&1
+    case "''${1:-}" in sync|watch|poll) exec >> ${lib.escapeShellArg logFile} 2>&1 ;; esac
+    exec ${pkg}/bin/screentime-ingest "$@"
   '';
 in
 {
@@ -54,11 +55,12 @@ in
 
     credentialCommand = lib.mkOption {
       type = lib.types.str;
+      default = "";
       description = ''
-        Shell command printing {"clientId": ..., "clientSecret": ...} - the
-        Cloudflare Access service token the dashboard admits. Run only when a
-        refresh attempt or sync actually happens, never during idle polling.
-        Heartbeats reuse the credential in memory.
+        Optional shell command printing {"token": ...}, or legacy proxy
+        credentials {"clientId": ..., "clientSecret": ...}. Empty uses the
+        operating system credential store after screentime-ingest login.
+        Run only during refresh/sync, never idle polling.
       '';
     };
 
