@@ -158,6 +158,9 @@ adapter and compiler options live in `vite.config.ts` inside the
   edge days; overlapping sessions use separate lanes. Both timing views label
   their limited coverage and inclusion of estimated intervals, and exclude
   daily-only website measurements.
+  The app/site picker retains daily totals for entries without timing, labels
+  their measurement and offers Show daily totals; unavailable timing is never
+  presented as zero usage. Loading/error states are identified separately.
 - `UsageCache.sessions` is optional for compatibility with aggregate-only
   history. Derive it from committed focus events without changing stored
   originals or the import protocol. When the derived response shape changes,

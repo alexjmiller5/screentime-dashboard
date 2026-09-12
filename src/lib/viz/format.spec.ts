@@ -60,6 +60,10 @@ describe('app identity visuals', () => {
 });
 
 describe('formatDuration', () => {
+	it('does not display positive sub-minute usage as zero', () => {
+		for (const seconds of [1, 8, 29]) expect(formatDuration(seconds)).toBe('<1m');
+	});
+
 	it('renders seconds as compact h/m', () => {
 		expect(formatDuration(0)).toBe('0m');
 		expect(formatDuration(59)).toBe('1m');

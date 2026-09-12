@@ -160,6 +160,7 @@ export function formatAverage(secondsPerDay: number, bucket: 'day' | 'week' | 'm
 
 export function formatDuration(seconds: number): string {
 	const minutes = Math.round(seconds / 60);
+	if (seconds > 0 && minutes === 0) return '<1m';
 	const h = Math.floor(minutes / 60);
 	const m = minutes % 60;
 	if (h === 0) return `${m}m`;
