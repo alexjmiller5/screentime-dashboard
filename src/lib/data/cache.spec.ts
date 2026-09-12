@@ -128,6 +128,59 @@ describe('buildUsageCache', () => {
 		]);
 	});
 
+	it('exposes hourly website aggregates separately without double-counting daily rows', () => {
+		const cocoaSeconds = Date.parse('2026-08-26T04:00:00Z') / 1000 - 978307200;
+		const cache = buildUsageCache({
+			timeZone: TZ,
+			importedAt: '2026-08-26T05:00:00Z',
+			devices: {},
+			focusEventsByDevice: {},
+			knowledgecSessionsByDevice: {},
+			deviceActivityByDevice: {
+				phone: [
+					{ cocoaSeconds, entries: [{ key: 'web:example.test', seconds: 120 }] },
+					{
+						cocoaSeconds,
+						hourly: true,
+						entries: [
+							{ key: 'web:example.test', seconds: 59.6 },
+							{ key: 'com.example.browser', seconds: 60 }
+						]
+					}
+				]
+			}
+		});
+		expect(cache.rows).toEqual([
+			{
+				source: 'screentime',
+				device: 'phone',
+				date: '2026-08-26',
+				bundleId: 'web:example.test',
+				seconds: 120
+			}
+		]);
+		expect(cache.websiteHours).toEqual([
+			{
+				device: 'phone',
+				bundleId: 'web:example.test',
+				startMs: Date.parse('2026-08-26T04:00:00Z'),
+				endMs: Date.parse('2026-08-26T05:00:00Z'),
+				seconds: 60
+			}
+		]);
+	});
+
+	it('omits websiteHours when no hourly web totals exist', () => {
+		const cache = buildUsageCache({
+			timeZone: TZ,
+			importedAt: 'x',
+			devices: {},
+			focusEventsByDevice: {},
+			knowledgecSessionsByDevice: {}
+		});
+		expect(cache).not.toHaveProperty('websiteHours');
+	});
+
 	it('derives per-hour rows for the day grid (shell surfaces excluded)', () => {
 		const cache = buildUsageCache({
 			timeZone: TZ,

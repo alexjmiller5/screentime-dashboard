@@ -8,8 +8,11 @@ The chart selector offers **Totals**, **Timeline**, and **By hour**. Timeline
 places focus-derived sessions on a 24-hour clock, with individual day slots
 inside weekly and monthly buckets. By hour sums the selected dates into 24
 app-stacked bars. Date, device and app filters persist across views and
-reloads. Timing views cover focus-derived history; daily-only totals and
-websites cannot supply session timing. Totals include capped or inferred
+reloads. Timing views combine focus-derived app history with recorded website hour
+totals. Timeline shows hour totals as hatched blocks, with recorded durations
+in tooltips and the table; their exact start/stop times are unavailable. Browser
+time excludes tracked website time where timing is known. Retained aggregate
+history with unknown website overlap is identified in the chart. Daily-only history stays in Totals. Totals include capped or inferred
 intervals, marked estimated in Timeline. Session times include UTC offsets to distinguish
 repeated daylight-saving hours. Use Table to inspect values and intervals.
 

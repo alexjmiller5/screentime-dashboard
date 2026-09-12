@@ -9,7 +9,7 @@ import type { DeviceSegment } from '../data/deviceactivity';
 import { isSnapshotDirName } from './paths';
 
 /** Bump whenever parsing semantics change so unchanged files are reprocessed. */
-export const PARSER_VERSION = 1;
+export const PARSER_VERSION = 2;
 const FILENAMES = new Set(['biome-streams.tar.gz', 'knowledgeC.db.gz', 'device-activity.tar.gz']);
 const encoder = new TextEncoder();
 const byteSize = (value: unknown): number => encoder.encode(JSON.stringify(value)).length;

@@ -83,7 +83,7 @@ ingest` fills miniflare's D1 from this Mac's backups folder.
   `.github/workflows/deploy.yml` only (the CI Cloudflare token carries
   Workers Scripts + D1 Write, minted by `scripts/provision.py`).
 - **The mini's ingest is a nix-config flake pin, the Worker is CI-deployed** -
-  they version-skew independently. Any change to the refresh protocol
+  they version-skew independently. Any change to parsing or the refresh protocol
   (`/api/refresh/job` stages, the pending flag's lifecycle) is only half
   shipped until `nix flake update screentime-dashboard` + a mini rebuild:
   an old ingest syncs fine but never confirms, so the site sits on
@@ -117,16 +117,20 @@ project note):
   usage data; the extractor's field-type checks reject them) - skip them.
   Device UUIDs are machine-specific and never hardcoded: labels live in the
   `devices` table, edited in the dashboard's Devices dialog.
-- **DeviceActivity `Cloud/<user>/<device>/Daily/ActivitySegments/*.plist`**
+- **DeviceActivity `Cloud/<user>/<device>/{Daily,Hourly}/ActivitySegments/*.plist`**
   (inside `device-activity.tar.gz`, capturable only on macOS ≤26.2 Macs -
   currently the MacBook): Apple's own cross-device Screen Time aggregates as
   binary plists - per-app durations AND per-web-domain durations (WebKit
   reports every iOS browser, so this is where iPhone per-site time lives).
   Parsed by `bplist.ts` + `deviceactivity.ts` into `source: 'screentime'`
-  rows; web domains get `web:<domain>` bundle ids. Apps and websites are
-  parallel breakdowns of the SAME minutes - the UI's Apps/Websites view
-  keeps them from ever being summed together. Hourly/ and Local/ files are
-  skipped; later snapshots overwrite earlier copies of the same day. Two
+  daily rows; web domains get `web:<domain>` bundle ids. Hourly segments carry
+  real one-hour windows with per-site totals, exposed as `websiteHours` separately
+  from focus sessions. They do not contain exact website start/stop times.
+  Browser residuals exclude website time using the device label to join the
+  two identity namespaces. Local/ and AppleDouble companion files are skipped;
+  later snapshots overwrite the same device/window/granularity, including
+  empty replacements. Ledger segment headers use value null for daily and
+  3600 for hourly, so midnight daily/hourly records cannot overwrite each other. Two
   segments can land on one local date (non-midnight boundary, time-zone
   change) - `buildUsageCache` sums them into the one row per
   (source, device, date, bundle) that D1 keys on.
@@ -149,15 +153,23 @@ adapter and compiler options live in `vite.config.ts` inside the
 
 - **Chart views** share the date window, devices and app selection, saved with
   the selected view and table state in `screentime:prefs`. Totals uses elected
-  daily measurements; By hour sums focus-derived hourly history into 24 bars
-  and disables bucketing. Timeline loads focus sessions on demand from committed
+  daily measurements; By hour combines focus-derived app history with recorded
+  website hour totals into 24 bars and disables bucketing. Timeline loads
+  focus sessions on demand from committed
   originals, split at local hour boundaries, on a midnight-to-midnight axis.
   Tooltips and table times include UTC offsets; capped or inferred intervals
   are flagged as estimated. The interval table pages 100 rows at a time.
   Weekly and monthly buckets reserve all calendar days, including unselected
-  edge days; overlapping sessions use separate lanes. Both timing views label
-  their limited coverage and inclusion of estimated intervals, and exclude
-  daily-only website measurements.
+  edge days; overlapping sessions use separate lanes. Recorded website hours
+  appear as hatched hour cells keyed by the window's local start hour, with
+  duration independent of cell height. Browser portions within those windows
+  become residual hour totals too: their exact remaining placement is unknown.
+  By hour normally uses cached focus-hour totals. When recorded website windows
+  cross local clock-hour boundaries, it loads sessions and subtracts actual overlap
+  before bucketing. Aggregate-only remainders are preserved and explicitly labeled
+  when their website overlap is unknowable. Both timing views exclude daily-only
+  measurements. Timeline points retain raw
+  bundle IDs separately from display keys, so domains are never normalized twice.
   The app/site picker retains daily totals for entries without timing, labels
   their measurement and offers Show daily totals; unavailable timing is never
   presented as zero usage. Loading/error states are identified separately.
@@ -189,7 +201,7 @@ adapter and compiler options live in `vite.config.ts` inside the
   pure #000 - black brands get a dark-safe gray); unknown apps hash to a
   stable `--chart-N` token slot (`paletteIndex`), so color follows the
   entity, never its rank.
-- Charts follow the `dataviz` skill; read it before touching chart code.
+- Charts follow the `dashboards` skill; read it before touching chart code.
   Chart.js PERF GOTCHA: cost scales with DATASET count, not data volume -
   past ~30 series StackedChart switches to rank-level floating bars (every
   app keeps its own segment; datasets = deepest day). Never use `skipNull`

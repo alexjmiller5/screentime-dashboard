@@ -28,13 +28,17 @@ vi.mock('$lib/server/store', () => ({
 afterEach(() => vi.unstubAllGlobals());
 it('reuses derived results until data changes and keeps client responses private', async () => {
 	const entries = new Map<string, Response>();
+	const namespaces = new Set<string>();
 	vi.stubGlobal('caches', {
-		open: async () => ({
-			match: async (key: Request) => entries.get(key.url)?.clone(),
-			put: async (key: Request, res: Response) => {
-				entries.set(key.url, res.clone());
-			}
-		})
+		open: async (name: string) => {
+			namespaces.add(name);
+			return {
+				match: async (key: Request) => entries.get(key.url)?.clone(),
+				put: async (key: Request, res: Response) => {
+					entries.set(key.url, res.clone());
+				}
+			};
+		}
 	});
 	const event = {
 		platform: { env: { DB: {} } },
@@ -49,12 +53,17 @@ it('reuses derived results until data changes and keeps client responses private
 	state.version = 'second';
 	expect(await (await GET(event)).json()).toMatchObject({ importedAt: 'second' });
 	expect(state.reads).toBe(2);
+	expect([...namespaces]).toEqual(['screentime-summary-v3']);
 });
 
 it('serves timing detail even when a pre-session response is cached for the same import', async () => {
+	const namespaces: string[] = [];
 	vi.stubGlobal('caches', {
 		open: async (name: string) => ({
-			match: async () => (name === 'screentime-usage' ? Response.json({ rows: [] }) : undefined),
+			match: async () => {
+				namespaces.push(name);
+				return undefined;
+			},
 			put: async () => {}
 		})
 	});
@@ -65,6 +74,7 @@ it('serves timing detail even when a pre-session response is cached for the same
 	const detail = (await response.json()) as { sessions: { bundleId: string }[] };
 	expect(detail.sessions.map((s: { bundleId: string }) => s.bundleId)).toEqual(['app']);
 	expect(detail).not.toHaveProperty('rows');
+	expect(namespaces).toEqual(['screentime-sessions-v1']);
 });
 
 it.each([

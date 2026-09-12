@@ -54,7 +54,14 @@
 		type Bucket
 	} from '$lib/viz/series';
 	import { appName, formatAverage, formatDuration } from '$lib/viz/format';
-	import { hourlyByApp, timelineByApp, sessionTime } from '$lib/viz/rhythm';
+	import { makeDateParts } from '$lib/data/intervals';
+	import {
+		hourlyByApp,
+		timelineByApp,
+		sessionTime,
+		combineHourlyUsage,
+		withWebsiteHours
+	} from '$lib/viz/rhythm';
 	import { dateRange } from '$lib/viz/series';
 
 	let cache = $state<UsageCache | null>(null);
@@ -147,10 +154,15 @@
 	let sessionAttempt = $state(0);
 	let timelinePage = $state(0);
 	const sessionKey = $derived(`${cache?.importedAt}|${dateStart}|${dateEnd}`);
+	const shiftedWebsiteHours = $derived.by(() => {
+		const parts = makeDateParts(cache?.timeZone ?? 'UTC');
+		return (cache?.websiteHours ?? []).some((w) => parts(w.startMs).msIntoDay % 3_600_000 !== 0);
+	});
+	const needsSessions = $derived(view === 'timeline' || (view === 'hourly' && shiftedWebsiteHours));
 	$effect(() => {
 		const key = sessionKey;
 		void sessionAttempt;
-		if (view !== 'timeline' || !cache || !dateStart || !dateEnd || sessionData?.key === key) return;
+		if (!needsSessions || !cache || !dateStart || !dateEnd || sessionData?.key === key) return;
 		const controller = new AbortController();
 		sessionError = '';
 		fetch(`/api/usage?${new URLSearchParams({ sessions: '1', start: dateStart, end: dateEnd })}`, {
@@ -410,6 +422,7 @@
 				[
 					...elected.apps,
 					...elected.webs,
+					...(cache?.websiteHours ?? []),
 					...(cache?.hourly ?? []),
 					...(cache?.sessions ?? [])
 				].map((r) => deviceLabel(r.device))
@@ -429,7 +442,9 @@
 	const websDev = $derived(byDevice(elected.webs));
 	// Apps and websites live in ONE stack: browsers scaled down to the residual
 	// not covered by their tracked domains, so nothing double-counts.
-	const sourceRows = $derived(combineUsage(appsDev, websDev));
+	const sourceRows = $derived(
+		combineUsage(appsDev, websDev, (r) => `${deviceLabel(r.device)}|${r.date}`)
+	);
 	// Slider bounds: the full extent of the data, before any device filter.
 	const bounds = $derived.by(() => {
 		let min = '';
@@ -469,21 +484,32 @@
 		})
 	);
 	const hourRows = $derived(
-		filterRows(byDevice(cache?.hourly ?? []), {
-			startDate: dateStart || undefined,
-			endDate: dateEnd || undefined
-		})
+		filterRows(
+			combineHourlyUsage(
+				byDevice(cache?.hourly ?? []),
+				byDevice(cache?.websiteHours ?? []),
+				cache?.timeZone ?? 'UTC',
+				deviceLabel,
+				shiftedWebsiteHours && sessionData?.key === sessionKey
+					? byDevice(sessionData.sessions)
+					: undefined
+			),
+			{
+				startDate: dateStart || undefined,
+				endDate: dateEnd || undefined
+			}
+		)
+	);
+	const timedUsage = $derived(
+		withWebsiteHours(
+			byDevice(sessionData?.key === sessionKey ? sessionData.sessions : []),
+			byDevice(cache?.websiteHours ?? []),
+			deviceLabel
+		)
 	);
 	const timeline = $derived(
 		view === 'timeline'
-			? timelineByApp(
-					byDevice(sessionData?.key === sessionKey ? sessionData.sessions : []),
-					cache?.timeZone ?? 'UTC',
-					dateStart,
-					dateEnd,
-					bucket,
-					appName
-				)
+			? timelineByApp(timedUsage, cache?.timeZone ?? 'UTC', dateStart, dateEnd, bucket, appName)
 			: undefined
 	);
 	const rows = $derived(
@@ -495,15 +521,22 @@
 						source: 'infocus' as const,
 						device: p.device,
 						date: p.date,
-						bundleId: p.key,
+						bundleId: p.bundleId,
 						seconds: p.seconds
 					}))
 	);
 	const filteredTimeline = $derived(
-		timeline && {
-			...timeline,
-			points: timeline.points.filter((p) => !picked.length || picked.includes(p.key))
-		}
+		timeline && picked.length
+			? timelineByApp(
+					timedUsage,
+					cache?.timeZone ?? 'UTC',
+					dateStart,
+					dateEnd,
+					bucket,
+					appName,
+					picked
+				)
+			: timeline
 	);
 	$effect(() => {
 		void filteredTimeline;
@@ -886,7 +919,7 @@
 				<div class="flex flex-wrap items-baseline gap-3">
 					<h2 class="text-sm font-medium">
 						{view === 'timeline'
-							? 'When apps were used'
+							? 'When apps and sites were used'
 							: view === 'hourly'
 								? 'Usage by hour of day'
 								: bucket === 'day'
@@ -908,14 +941,19 @@
 			{#if view !== 'totals'}
 				<p class="mb-3 text-xs text-muted-foreground">
 					{view === 'timeline'
-						? 'Focus-derived app sessions at their local clock times. Overlapping usage appears side by side.'
-						: 'Total focus-derived app usage in each hour across the selected dates, not a daily average.'}
-					{cache.timeZone}. Focus history only; websites and daily-only history have no timing
-					detail, so totals can differ. Totals include estimated intervals when end events are
-					missing or sessions exceed the four-hour cap.
+						? 'Solid bars show app sessions. Hatched blocks show hour totals at the recorded window’s starting hour; exact start/stop times are unavailable. Hover or open Table for durations.'
+						: 'Total app and website usage by hour across the selected dates. Website totals use their recorded hour’s start time.'}
+					{cache.timeZone}. Browser overlap is removed where timing is known. Daily-only history is
+					omitted; capped or inferred app sessions are marked estimated.
 				</p>
 			{/if}
-			{#if view === 'timeline' && sessionError}
+			{#if view === 'hourly' && hourRows.some((r) => r.overlapUnknown && (!picked.length || picked.includes(appName(r.bundleId))))}
+				<p class="mb-3 text-xs text-muted-foreground">
+					Some retained browser totals lack session detail. Their website overlap is unknown, so the
+					combined total can count that time twice.
+				</p>
+			{/if}
+			{#if needsSessions && sessionError}
 				<p class="py-8 text-sm text-destructive" role="alert">{sessionError}</p>
 				<Button
 					variant="outline"
@@ -924,7 +962,7 @@
 						sessionAttempt++;
 					}}>Retry session history</Button
 				>
-			{:else if view === 'timeline' && sessionData?.key !== sessionKey}
+			{:else if needsSessions && sessionData?.key !== sessionKey}
 				<p class="py-16 text-center text-sm text-muted-foreground" role="status">
 					Loading session history…
 				</p>
@@ -954,7 +992,11 @@
 									><td class="px-3 py-2">{point.key}</td><td class="px-3 py-2"
 										>{deviceLabel(point.device)}</td
 									><td class="px-3 py-2 whitespace-nowrap"
-										>{formatDuration(point.seconds)}{point.estimated ? ' · estimated' : ''}</td
+										>{formatDuration(point.seconds)}{point.resolution === 'hour'
+											? ' · hour total'
+											: point.estimated
+												? ' · estimated'
+												: ''}</td
 									></tr
 								>{/each}</tbody
 						>

@@ -11,6 +11,11 @@ const streams = new Uint8Array(
 const activity = new Uint8Array(
 	readFileSync(new URL('../data/fixtures/device-activity.tar.gz', import.meta.url))
 );
+
+it('uses parser version 2 for hourly DeviceActivity semantics', () => {
+	expect(PARSER_VERSION).toBe(2);
+});
+
 function dir(snapshots: Record<string, Record<string, Uint8Array>>): DirLike {
 	return {
 		async *values() {

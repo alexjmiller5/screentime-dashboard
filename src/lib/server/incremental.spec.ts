@@ -224,6 +224,10 @@ it('validates payload shape, limits, identifiers and all nested parsed records',
 		{
 			...scan(),
 			deviceActivityByDevice: { d: [{ cocoaSeconds: 0, entries: [{ key: 'a', seconds: -1 }] }] }
+		},
+		{
+			...scan(),
+			deviceActivityByDevice: { d: [{ cocoaSeconds: 0, hourly: false, entries: [] }] }
 		}
 	])
 		expect((await post({ action: 'chunk', uploadId: id, index: 0, scan: value })).status).toBe(400);
@@ -356,6 +360,36 @@ it('selects complete latest segments in SQL, including repeated headers and empt
 	merged = await readImportedScan(db);
 	expect(merged.deviceActivityByDevice['device-1']).toEqual([
 		{ cocoaSeconds: 788918400, entries: [] }
+	]);
+});
+
+it('round-trips colliding daily and hourly segments and clears only the replaced granularity', async () => {
+	const first = scan();
+	first.deviceActivityByDevice['device-1'].push({
+		cocoaSeconds: 788918400,
+		hourly: true,
+		entries: [{ key: 'web:example.test', seconds: 50 }]
+	});
+	await upload('2026-01-01/device-activity.tar.gz', first);
+	let merged = await readImportedScan(db);
+	expect(merged.deviceActivityByDevice['device-1']).toEqual([
+		{ cocoaSeconds: 788918400, entries: [{ key: 'example.app', seconds: 60 }] },
+		{
+			cocoaSeconds: 788918400,
+			hourly: true,
+			entries: [{ key: 'web:example.test', seconds: 50 }]
+		}
+	]);
+
+	const replacement = scan();
+	replacement.deviceActivityByDevice['device-1'] = [
+		{ cocoaSeconds: 788918400, hourly: true, entries: [] }
+	];
+	await upload('2026-01-02/device-activity.tar.gz', replacement);
+	merged = await readImportedScan(db);
+	expect(merged.deviceActivityByDevice['device-1']).toEqual([
+		{ cocoaSeconds: 788918400, entries: [{ key: 'example.app', seconds: 60 }] },
+		{ cocoaSeconds: 788918400, hourly: true, entries: [] }
 	]);
 });
 

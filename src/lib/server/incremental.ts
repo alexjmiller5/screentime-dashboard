@@ -80,8 +80,9 @@ function recordsFromScan(input: unknown): RecordRow[] {
 					add(['session', device, start, text(record.bundleId), end]);
 				} else {
 					const timestamp = number(record.cocoaSeconds, -978307200, 8639999021692);
+					requireValid(record.hourly === undefined || record.hourly === true);
 					const segmentOrdinal = rows.length;
-					add(['segment', device, timestamp, null, null]);
+					add(['segment', device, timestamp, null, record.hourly ? 3600 : null]);
 					for (const value of array(record.entries)) {
 						const entry = object(value);
 						add([
@@ -303,20 +304,21 @@ export async function readImportedScan(db: D1Database): Promise<ImportResult> {
    WHERE r.kind IN ('focus','session')
   ), ranked_segments AS (
    SELECT f.path,r.*,ROW_NUMBER() OVER (
-    PARTITION BY r.device,r.timestamp
+    PARTITION BY r.device,r.timestamp,r.value
     ORDER BY f.path DESC,r.chunk_index DESC,r.ordinal DESC) AS rank
    FROM import_files f JOIN import_records r ON r.upload_id = f.upload_id WHERE r.kind = 'segment'
   ), selected AS (
-   SELECT path,kind,device,timestamp,bundle_id,value,chunk_index,ordinal FROM ranked_events WHERE rank = 1
+   SELECT path,kind,device,timestamp,bundle_id,value,chunk_index,ordinal,segment_ordinal FROM ranked_events WHERE rank = 1
    UNION ALL
-   SELECT path,kind,device,timestamp,bundle_id,value,chunk_index,ordinal FROM ranked_segments WHERE rank = 1
+   SELECT path,kind,device,timestamp,bundle_id,value,chunk_index,ordinal,segment_ordinal FROM ranked_segments WHERE rank = 1
    UNION ALL
-   SELECT s.path,r.kind,r.device,r.timestamp,r.bundle_id,r.value,r.chunk_index,r.ordinal
+   SELECT s.path,r.kind,r.device,r.timestamp,r.bundle_id,r.value,r.chunk_index,r.ordinal,r.segment_ordinal
    FROM ranked_segments s JOIN import_records r ON r.upload_id = s.upload_id AND r.chunk_index = s.chunk_index
     AND r.segment_ordinal = s.ordinal WHERE s.rank = 1
    UNION ALL
-   SELECT path,NULL,NULL,NULL,NULL,NULL,-1,-1 FROM import_files
-  ) SELECT path,kind,device,timestamp,bundle_id,value FROM selected ORDER BY path,chunk_index,ordinal`
+   SELECT path,NULL,NULL,NULL,NULL,NULL,-1,-1,NULL FROM import_files
+  ) SELECT path,kind,device,timestamp,bundle_id,value,chunk_index,ordinal,segment_ordinal
+   FROM selected ORDER BY path,chunk_index,ordinal`
 		)
 		.all<{
 			path: string;
@@ -324,10 +326,14 @@ export async function readImportedScan(db: D1Database): Promise<ImportResult> {
 			device: string;
 			timestamp: number;
 			bundle_id: string;
-			value: number;
+			value: number | null;
+			chunk_index: number;
+			ordinal: number;
+			segment_ordinal: number | null;
 		}>();
 	const snapshots = new Set<string>();
-	const segments = new Map<string, Map<number, DeviceSegment>>();
+	const segments = new Map<string, DeviceSegment[]>();
+	const segmentHeaders = new Map<string, DeviceSegment>();
 	for (const row of rows.results) {
 		snapshots.add(row.path.split('/')[0]);
 		if (row.kind === 'focus') {
@@ -339,21 +345,26 @@ export async function readImportedScan(db: D1Database): Promise<ImportResult> {
 		} else if (row.kind === 'session') {
 			(result.knowledgecSessionsByDevice[row.device] ??= []).push({
 				startMs: row.timestamp,
-				endMs: row.value,
+				endMs: row.value!,
 				bundleId: row.bundle_id
 			});
 		} else if (row.kind === 'segment') {
-			if (!segments.has(row.device)) segments.set(row.device, new Map());
-			segments.get(row.device)!.set(row.timestamp, { cocoaSeconds: row.timestamp, entries: [] });
+			const segment: DeviceSegment = {
+				cocoaSeconds: row.timestamp,
+				...(row.value === 3600 ? { hourly: true } : {}),
+				entries: []
+			};
+			let deviceSegments = segments.get(row.device);
+			if (!deviceSegments) segments.set(row.device, (deviceSegments = []));
+			deviceSegments.push(segment);
+			segmentHeaders.set(`${row.path}|${row.chunk_index}|${row.ordinal}`, segment);
 		} else if (row.kind === 'activity') {
-			segments
-				.get(row.device)!
-				.get(row.timestamp)!
-				.entries.push({ key: row.bundle_id, seconds: row.value });
+			segmentHeaders
+				.get(`${row.path}|${row.chunk_index}|${row.segment_ordinal}`)!
+				.entries.push({ key: row.bundle_id, seconds: row.value! });
 		}
 	}
 	result.snapshots = [...snapshots];
-	for (const [device, values] of segments)
-		result.deviceActivityByDevice[device] = [...values.values()];
+	for (const [device, values] of segments) result.deviceActivityByDevice[device] = values;
 	return result;
 }
