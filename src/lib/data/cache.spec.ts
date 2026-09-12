@@ -36,6 +36,12 @@ describe('buildUsageCache', () => {
 			importedAt: '2026-08-25T00:00:00Z',
 			timeZone: TZ,
 			devices: { 'uuid-phone': 'iPhone', 'uuid-mac': 'MacBook' },
+			sessions: [
+				{
+					device: 'uuid-phone',
+					...session('2026-01-05T15:00:00Z', '2026-01-05T15:01:00Z', 'com.example.a')
+				}
+			],
 			hourly: [
 				{
 					device: 'uuid-phone',
@@ -168,10 +174,29 @@ describe('buildUsageCache', () => {
 			}
 		});
 		expect(cache.rows).toEqual([]);
+		expect(cache.sessions).toEqual([]);
 	});
 });
 
 describe('buildUsageCache row identity', () => {
+	it('keeps short recorded usage in hourly totals as well as the timeline', () => {
+		const cache = buildUsageCache({
+			timeZone: 'UTC',
+			importedAt: 'x',
+			devices: {},
+			knowledgecSessionsByDevice: {},
+			focusEventsByDevice: {
+				phone: [
+					ev('2026-01-01T09:00:00Z', 'com.example.quick', true),
+					ev('2026-01-01T09:00:10Z', 'com.example.quick', false)
+				]
+			}
+		});
+		expect(cache.hourly).toEqual([
+			{ device: 'phone', date: '2026-01-01', hour: 9, bundleId: 'com.example.quick', seconds: 10 }
+		]);
+	});
+
 	it('merges two DeviceActivity segments that land on one local date by summing', () => {
 		const cache = buildUsageCache({
 			timeZone: TZ,

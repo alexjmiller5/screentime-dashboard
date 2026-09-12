@@ -5,6 +5,6 @@
 # Push to CF:     just sync-secrets
 #
 # This app has NO runtime secrets: data is imported client-side from local
-# backups, storage is an R2 binding (wrangler.jsonc), and auth is Cloudflare
+# backups, storage is a D1 binding (wrangler.jsonc), and auth is Cloudflare
 # Access at the edge. CI deploy creds live in .github/workflows/deploy.yml
 # per the infra convention (CI-only creds never go here).

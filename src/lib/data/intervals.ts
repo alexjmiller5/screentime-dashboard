@@ -1,7 +1,6 @@
 // Focus events -> per-bundle daily usage seconds.
-// Sessions are explicit in the stream (focus gained/lost pairs), so duration
-// is exact - no gap heuristics. The cap only guards against lost unfocus
-// events (device died mid-session, stream truncation).
+// Paired focus gained/lost events give durations. A repeated focus infers a
+// missing end; the cap guards against runaway sessions. Both are estimated.
 
 import type { FocusEvent } from './infocus';
 
@@ -20,7 +19,7 @@ export interface DeriveOptions {
 
 const DAY_MS = 86_400_000;
 
-function makeDateParts(timeZone: string) {
+export function makeDateParts(timeZone: string) {
 	const fmt = new Intl.DateTimeFormat('en-CA', {
 		timeZone,
 		year: 'numeric',
@@ -56,15 +55,20 @@ export function sessionsFromEvents(events: FocusEvent[], maxSessionMs: number): 
 
 	const open = new Map<string, number>();
 	const sessions: UsageSession[] = [];
-	const close = (bundleId: string, endMs: number) => {
+	const close = (bundleId: string, endMs: number, inferred = false) => {
 		const startMs = open.get(bundleId);
 		if (startMs === undefined || endMs <= startMs) return;
-		sessions.push({ bundleId, startMs, endMs: Math.min(endMs, startMs + maxSessionMs) });
+		sessions.push({
+			bundleId,
+			startMs,
+			endMs: Math.min(endMs, startMs + maxSessionMs),
+			...(inferred || endMs > startMs + maxSessionMs ? { estimated: true } : {})
+		});
 		open.delete(bundleId);
 	};
 	for (const e of sorted) {
 		if (e.focus) {
-			close(e.bundleId, e.tsMs); // refocus without unfocus: previous session ran until now
+			close(e.bundleId, e.tsMs, true); // refocus without unfocus: end is inferred
 			open.set(e.bundleId, e.tsMs);
 		} else {
 			close(e.bundleId, e.tsMs);
@@ -120,6 +124,8 @@ export interface UsageSession {
 	bundleId: string;
 	startMs: number;
 	endMs: number;
+	/** Missing end inferred from refocus, or duration limited by the runaway guard. */
+	estimated?: boolean;
 }
 
 /** Absolute sessions -> per-bundle daily seconds, split at local midnight. */

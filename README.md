@@ -4,6 +4,15 @@ Personal dashboard for Apple Screen Time history across devices - app usage
 over time, per-device and per-app breakdowns, and trend views for the apps I'm
 trying to use less.
 
+The chart selector offers **Totals**, **Timeline**, and **By hour**. Timeline
+places focus-derived sessions on a 24-hour clock, with individual day slots
+inside weekly and monthly buckets. By hour sums the selected dates into 24
+app-stacked bars. Date, device and app filters persist across views and
+reloads. Timing views cover focus-derived history; daily-only totals and
+websites cannot supply session timing. Totals include capped or inferred
+intervals, marked estimated in Timeline. Session times include UTC offsets to distinguish
+repeated daylight-saving hours. Use Table to inspect values and intervals.
+
 Data comes from weekly [screentime-backup](https://github.com/alexjmiller5/screentime-backup)
 snapshots (knowledgeC.db + Biome SEGB streams + DeviceActivity plists). A
 Bun CLI, `screentime-ingest`, and the dashboard's local folder importer use
