@@ -11,12 +11,15 @@
 //                            `sync` inline when there is no backup agent.
 //                            Bounded retries with growing gaps per request.
 //   screentime-ingest poll   one pass of the above, no hold (cron-style)
+//   screentime-ingest login  approve an upload device in the browser; store native auth
+//   screentime-ingest logout revoke the upload credential and remove native auth
 //
 // Config (env):
 //   SCREENTIME_DASHBOARD_URL                 https://<dashboard host>      (required)
-//   SCREENTIME_DASHBOARD_CREDENTIAL_COMMAND  prints {"clientId","clientSecret"} - a
-//                                            Cloudflare Access service token (sync)
-//   SCREENTIME_DASHBOARD_CLIENT_ID/_SECRET   literal alternative to the command
+//   SCREENTIME_DASHBOARD_TOKEN               optional app-issued token; default native store
+//   SCREENTIME_DASHBOARD_CREDENTIAL_COMMAND  optional JSON {"token"} supplier
+//   SCREENTIME_DASHBOARD_CLIENT_ID/_SECRET   optional legacy proxy credential
+//   SCREENTIME_DASHBOARD_HEADERS             optional JSON headers for an existing proxy
 //   SCREENTIME_BACKUPS_DIR                   default ~/Documents/screen-time-backups
 //   SCREENTIME_BACKUP_LABEL                  launchd label `poll` kickstarts; unset =
 //                                            poll runs sync itself
@@ -33,14 +36,15 @@ import type { JobUpdate } from '../lib/server/refresh-job';
 import { homedir, tmpdir } from 'node:os';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { syncBackups, type FetchFn } from '../lib/import/incremental';
+import { syncBackups } from '../lib/import/incremental';
+import { credential, login, logout, dashboardUrl } from './auth';
 import { DEFAULT_READ_TIMEOUT_MS, fsDir } from './fsdir';
 import {
 	afterFailedAttempt,
 	DashboardClient,
+	authenticatedFetch,
 	planAttempt,
 	type AttemptState,
-	type Credential,
 	type PendingRequest
 } from './client';
 
@@ -51,23 +55,6 @@ function required(name: string): string {
 	const v = env[name];
 	if (!v) throw new Error(`${name} is not set`);
 	return v;
-}
-
-async function credential(): Promise<Credential> {
-	if (env.SCREENTIME_DASHBOARD_CLIENT_ID && env.SCREENTIME_DASHBOARD_CLIENT_SECRET) {
-		return {
-			clientId: env.SCREENTIME_DASHBOARD_CLIENT_ID,
-			clientSecret: env.SCREENTIME_DASHBOARD_CLIENT_SECRET
-		};
-	}
-	const cmd = required('SCREENTIME_DASHBOARD_CREDENTIAL_COMMAND');
-	const proc = Bun.spawn(['/bin/sh', '-c', cmd], { stdout: 'pipe', stderr: 'inherit' });
-	const out = await new Response(proc.stdout).text();
-	if ((await proc.exited) !== 0) throw new Error('credential command failed');
-	const parsed = JSON.parse(out) as Partial<Credential>;
-	if (!parsed.clientId || !parsed.clientSecret)
-		throw new Error('credential command: need clientId + clientSecret');
-	return { clientId: parsed.clientId, clientSecret: parsed.clientSecret };
 }
 
 async function querySqlite(dbBytes: Uint8Array, sql: string): Promise<unknown[][]> {
@@ -90,18 +77,13 @@ async function querySqlite(dbBytes: Uint8Array, sql: string): Promise<unknown[][
 }
 
 async function sync(force = false, context?: JobContext): Promise<void> {
-	const url = required('SCREENTIME_DASHBOARD_URL');
+	const url = dashboardUrl(required('SCREENTIME_DASHBOARD_URL'));
 	const backups = env.SCREENTIME_BACKUPS_DIR ?? join(homedir(), 'Documents', 'screen-time-backups');
 	const timeZone = env.SCREENTIME_TIME_ZONE ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
 	const runId = new Date().toISOString();
 	const cred = await credential();
 	const client = new DashboardClient(url, cred);
-	const fetchFn: FetchFn = (input, init) => {
-		const headers = new Headers(init?.headers);
-		headers.set('CF-Access-Client-Id', cred.clientId);
-		headers.set('CF-Access-Client-Secret', cred.clientSecret);
-		return fetch(input, { ...init, headers, redirect: 'error' });
-	};
+	const fetchFn = authenticatedFetch(url, cred);
 	if (
 		context &&
 		!(await client.job({ ...context, stage: 'importing', detail: 'Checking backup files' }))
@@ -373,11 +355,23 @@ try {
 		const rebuild = await readFile(flag, 'utf8').catch(() => '');
 		if (rebuild) await unlink(flag).catch(() => {});
 		await sync(Boolean(rebuild) || process.argv.includes('--force'), await readContext());
-	} else if (command === 'poll') await poll();
+	} else if (command === 'login') {
+		const nameIndex = process.argv.indexOf('--name');
+		if (nameIndex >= 0 && !process.argv[nameIndex + 1])
+			throw new Error('--name needs a device label');
+		await login(
+			required('SCREENTIME_DASHBOARD_URL'),
+			nameIndex >= 0 ? process.argv[nameIndex + 1] : undefined,
+			{ noBrowser: process.argv.includes('--no-browser') }
+		);
+	} else if (command === 'logout') await logout(required('SCREENTIME_DASHBOARD_URL'));
+	else if (command === 'poll') await poll();
 	else if (command === 'watch') await watch();
 	else {
-		console.error('usage: screentime-ingest sync | watch | poll');
-		process.exit(2);
+		console.error(
+			'usage: screentime-ingest login [--no-browser] [--name <label>] | logout | sync | watch | poll'
+		);
+		process.exit(command === '--help' ? 0 : 2);
 	}
 } catch (error) {
 	log(`ERROR ${error instanceof Error ? error.message : String(error)}`);

@@ -62,8 +62,8 @@ stop when it closes; completed files stay committed and are skipped next time.
 ## Stack
 
 SvelteKit (Svelte 5) + Tailwind v4 + shadcn-svelte on a Cloudflare Worker
-with static assets. Storage: D1. Auth: Cloudflare Access at the edge (no
-auth code in the app; the ingest job gets in with an Access service token).
+with static assets. Storage: D1. Browser auth: Cloudflare Access at the edge.
+Upload devices use app-issued, revocable credentials stored in the OS credential store.
 Installable iOS/Android homescreen app. Scaffolded from the
 [cf-site](https://github.com/alexjmiller5/cf-site) template.
 
@@ -90,14 +90,28 @@ services.screentime-ingest = {
   enable = true;
   user = "you";
   url = "https://<your dashboard host>";
-  # prints {"clientId": "...", "clientSecret": "..."} - the Access service token
-  credentialCommand = "/path/to/your/credential-script";
 };
 ```
 
-Without nix: `SCREENTIME_DASHBOARD_URL=... SCREENTIME_DASHBOARD_CREDENTIAL_COMMAND=...
-bun run src/ingest/cli.ts sync` (see the env table at the top of
-`src/ingest/cli.ts`).
+After activating the module, run `screentime-ingest login`. Open its browser
+link, match the approval code, and approve the uploader. On a headless Mac,
+use `screentime-ingest login --no-browser` and open the printed link on your
+other device. The credential stays in the uploader's macOS Keychain; the
+watcher and backup hook must run as that same desktop user with its login
+Keychain unlocked. Native Keychain prompts belong on that user's desktop.
+
+Use **Upload devices** in the dashboard to revoke a lost or replaced uploader.
+`screentime-ingest logout` revokes the current credential before removing it
+locally. A replacement machine enrolls again; copying machine bootstrap or
+deployment credentials is unnecessary. Verify setup with a real Refresh,
+including the import stage.
+
+For one-off use without a service, run the packaged CLI:
+`SCREENTIME_DASHBOARD_URL=https://<dashboard-host> nix run github:alexjmiller5/screentime-dashboard -- login`.
+Use `sync` with the same URL to import. Optional `SCREENTIME_DASHBOARD_TOKEN`,
+`SCREENTIME_DASHBOARD_CREDENTIAL_COMMAND` (JSON `{"token":"..."}`), and
+`SCREENTIME_DASHBOARD_HEADERS` (JSON object) support external credential and
+proxy setups. Legacy Access credential inputs remain supported.
 
 ## Development
 
@@ -122,5 +136,8 @@ Marker content lives in D1, never in source control.
 - No runtime secrets (`.env.tpl` is intentionally empty); CI deploy creds
   resolve from 1Password in the workflow.
 - Provisioning is scripted: `scripts/cf-d1.py` (database), `scripts/cf-access.py
---pwa --public-path /api/refresh/pending --service-token "<name>"` (Access +
-  the ingest job's service token), `scripts/generate-icons.sh` (homescreen icons).
+--domain '<worker>.<account>.workers.dev' --domain '*-<worker>.<account>.workers.dev'
+--pwa --public-path /api/refresh/pending --public-path '/api/device/*'` (Access),
+  `scripts/generate-icons.sh` (homescreen icons). Deploy the authenticated device
+  API and migration before adding the device path bypass. `/connect` and all
+  other dashboard routes must remain Access-protected, including preview hosts.

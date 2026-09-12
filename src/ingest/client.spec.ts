@@ -1,10 +1,42 @@
 import { describe, expect, it } from 'vitest';
-import { afterFailedAttempt, DashboardClient, planAttempt, RETRY_DELAYS_MS } from './client';
+import {
+	afterFailedAttempt,
+	DashboardClient,
+	planAttempt,
+	RETRY_DELAYS_MS,
+	authenticatedFetch
+} from './client';
 describe('DashboardClient', () => {
+	it('uses the app device endpoint for bearer auth and never sends it to another origin', async () => {
+		const calls: Request[] = [];
+		const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+			calls.push(new Request(input, init));
+			return new Response(null, { status: 204 });
+		}) as typeof fetch;
+		const credential = { token: `st_${'a'.repeat(64)}`, headers: { 'X-Proxy': 'proxy-value' } };
+		const client = new DashboardClient('https://dash.example', credential, fetchFn);
+		await client.post({ runId: 'run', started: true });
+		const upload = authenticatedFetch('https://dash.example', credential, fetchFn);
+		await upload('https://dash.example/api/imports', {
+			method: 'POST',
+			body: '{"action":"begin"}'
+		});
+		expect(calls.map((r) => r.url)).toEqual([
+			'https://dash.example/api/device/ingest',
+			'https://dash.example/api/device/imports'
+		]);
+		expect(calls[0].headers.get('Authorization')).toBe(`Bearer ${credential.token}`);
+		expect(calls[0].headers.has('CF-Access-Client-Secret')).toBe(false);
+		expect(calls[0].headers.get('X-Proxy')).toBe('proxy-value');
+		expect(calls[0].redirect).toBe('error');
+		expect(await calls[1].json()).toEqual({ action: 'begin' });
+		await expect(upload('https://elsewhere.example/api/imports')).rejects.toThrow('origin');
+		expect(calls).toHaveLength(2);
+	});
 	it('posts chunks with Access service-token headers and fails loudly on non-2xx', async () => {
-		const calls: { url: string; init: RequestInit }[] = [];
-		const fetchFn = (async (url: URL, init: RequestInit) => {
-			calls.push({ url: url.toString(), init });
+		const calls: Request[] = [];
+		const fetchFn = (async (url: Request, init: RequestInit) => {
+			calls.push(new Request(url, init));
 			return new Response(calls.length === 1 ? null : 'nope', {
 				status: calls.length === 1 ? 204 : 403
 			});
@@ -16,11 +48,9 @@ describe('DashboardClient', () => {
 		);
 		await c.post({ runId: 'r', started: true });
 		expect(calls[0].url).toBe('https://dash.example/api/ingest');
-		expect(calls[0].init.headers).toMatchObject({
-			'CF-Access-Client-Id': 'id',
-			'CF-Access-Client-Secret': 'sec'
-		});
-		expect(JSON.parse(calls[0].init.body as string)).toEqual({ runId: 'r', started: true });
+		expect(calls[0].headers.get('CF-Access-Client-Id')).toBe('id');
+		expect(calls[0].headers.get('CF-Access-Client-Secret')).toBe('sec');
+		expect(await calls[0].json()).toEqual({ runId: 'r', started: true });
 		await expect(c.post({ runId: 'r' })).rejects.toThrow('ingest 403: nope');
 	});
 

@@ -22,6 +22,7 @@
 		IconCalendarStats,
 		IconChevronDown,
 		IconDevices,
+		IconKey,
 		IconDeviceDesktop,
 		IconDeviceLaptop,
 		IconDeviceMobile
@@ -618,6 +619,9 @@
 						Devices
 					</Button>
 				{/if}
+				<Button variant="ghost" size="sm" href="/connect"
+					><IconKey size={16} />Upload devices</Button
+				>
 				{#if cache}
 					<Button
 						variant="outline"

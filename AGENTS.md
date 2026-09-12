@@ -45,10 +45,15 @@ snapshots. Private site - Alex only, via Cloudflare Access.
   the CLI uses Bun SQLite. Both use the same parsers and ledger, so a file
   imported from either machine is skipped by the other. Show imported,
   skipped and unavailable file counts; partial success must remain visible.
-- **Machine auth = an Access service token**, not app code: the mini sends
-  `CF-Access-Client-Id/Secret` (its own credential, in the Mac Mini vault)
-  and Access admits it via a `non_identity` policy that `scripts/cf-access.py
---service-token` maintains. The Worker still contains zero auth code.
+- **Upload devices enroll through `/connect`**, protected by the dashboard's
+  Cloudflare Access policy. `screentime-ingest login` generates a random bearer,
+  sends only its SHA-256 fingerprint to browser approval, and stores the approved
+  credential with Bun's native secret storage. `upload_devices` stores hashes
+  and revocation state. The device API authenticates each request and allows
+  only file import, ingest status, refresh reads/progress, and self-revocation.
+  It cannot create refresh jobs or reach dashboard administration endpoints.
+  `/connect` must never be bypassed: its assertion-header presence check is a
+  fail-closed guard, not JWT verification. Revoked hashes cannot be reapproved.
 - **Storage: D1** (`DB` binding, database `screentime-dashboard`, schema in
   `migrations/`): `usage` (source, device, date, bundle_id → seconds),
   `hourly`, file ledger/staged parsed contributions, `markers`, `devices` (uuid → label, edited in the Devices dialog; the
@@ -68,8 +73,12 @@ snapshots. Private site - Alex only, via Cloudflare Access.
 SCREENTIME_DASHBOARD_CLIENT_ID=x SCREENTIME_DASHBOARD_CLIENT_SECRET=y just
 ingest` fills miniflare's D1 from this Mac's backups folder.
 - **Auth: Cloudflare Access at the edge** (Alex only), provisioned by
-  `scripts/cf-access.py --pwa --public-path /api/refresh/pending
---service-token "screentime-dashboard - Mac Mini"`. No runtime secrets:
+  `scripts/cf-access.py --domain '<worker>.<account>.workers.dev'
+--domain '*-<worker>.<account>.workers.dev' --pwa --public-path /api/refresh/pending
+--public-path '/api/device/*'`. Deploy the authenticated device API and its
+  migration before enabling that public path. Protect all production and
+  preview hostnames, including `/connect`; only the narrow device API bypasses
+  browser login. No runtime secrets:
   `.env.tpl` is intentionally empty; CI deploy creds are op:// refs in
   `.github/workflows/deploy.yml` only (the CI Cloudflare token carries
   Workers Scripts + D1 Write, minted by `scripts/provision.py`).
@@ -82,10 +91,12 @@ ingest` fills miniflare's D1 from this Mac's backups folder.
 - **Installed on the mini via nix** (`flake.nix`: `packages.default` =
   screentime-ingest, `darwinModules.default` = the watch agent + the
   `syncCommand` handed to `services.screentime-backup.postRun`). Config is
-  env vars (`SCREENTIME_DASHBOARD_URL`, `..._CREDENTIAL_COMMAND` printing
-  `{clientId, clientSecret}`, `SCREENTIME_BACKUPS_DIR`,
-  `SCREENTIME_BACKUP_LABEL`, `SCREENTIME_TIME_ZONE`) - the app never knows
-  where a credential comes from. Gotchas: `bun:sqlite`'s `deserialize`
+  env vars (`SCREENTIME_DASHBOARD_URL`, `SCREENTIME_BACKUPS_DIR`,
+  `SCREENTIME_BACKUP_LABEL`, `SCREENTIME_TIME_ZONE`). Native enrollment is the
+  default; optional token/command and proxy headers are generic seams.
+  The watcher and backup hook run as the same desktop user with access to
+  that user's Keychain. Replacement machines enroll anew; logout revokes
+  first and only removes local auth after success. Gotchas: `bun:sqlite`'s `deserialize`
   rejects some larger knowledgeC images, so the CLI opens a temp file; a
   bad file only loses that file, never the snapshot (errors are per file).
 
@@ -99,8 +110,8 @@ project note):
 - **Biome `App.InFocus/remote/<device-uuid>/` SEGB segments** are the primary
   source: app-focus events. Payload field 3 is an explicit focus gained(1)/
   lost(0) flag, field 4 the precise event timestamp (double of Cocoa seconds),
-  field 6 the bundle id - so durations are exact focus sessions, no gap
-  heuristics. `tombstone/` subdirs hold deletion-bookkeeping records (no
+  field 6 the bundle id. Paired events provide durations; inferred refocus
+  endings and four-hour truncations are marked estimated. `tombstone/` subdirs hold deletion-bookkeeping records (no
   usage data; the extractor's field-type checks reject them) - skip them.
   Device UUIDs are machine-specific and never hardcoded: labels live in the
   `devices` table, edited in the dashboard's Devices dialog.

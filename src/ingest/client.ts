@@ -4,10 +4,37 @@
 
 import type { IngestChunk, RefreshStatus } from '../lib/server/store';
 import type { JobUpdate } from '../lib/server/refresh-job';
+import type { FetchFn } from '../lib/import/incremental';
 
-export interface Credential {
-	clientId: string;
-	clientSecret: string;
+export type Credential = ({ token: string } | { clientId: string; clientSecret: string }) & {
+	/** Optional headers for a caller's existing proxy. */
+	headers?: Record<string, string>;
+};
+
+/** Both import uploads and job updates use the same authenticated transport. */
+export function authenticatedFetch(
+	baseUrl: string,
+	credential: Credential,
+	fetchFn: typeof fetch = fetch
+): FetchFn {
+	return async (input, init) => {
+		const request = new Request(input instanceof Request ? input : new URL(input, baseUrl), init);
+		const url = new URL(request.url);
+		if (url.origin !== new URL(baseUrl).origin)
+			throw new Error('Refusing to send credentials to another origin');
+		if ('token' in credential) {
+			if (!url.pathname.startsWith('/api/')) throw new Error('Dashboard API path required');
+			url.pathname = url.pathname.replace(/^\/api\//, '/api/device/');
+		}
+		const headers = new Headers(request.headers);
+		for (const [name, value] of Object.entries(credential.headers ?? {})) headers.set(name, value);
+		if ('token' in credential) headers.set('Authorization', `Bearer ${credential.token}`);
+		else {
+			headers.set('CF-Access-Client-Id', credential.clientId);
+			headers.set('CF-Access-Client-Secret', credential.clientSecret);
+		}
+		return fetchFn(new Request(url, request), { headers, redirect: 'error' });
+	};
 }
 
 export class DashboardClient {
@@ -36,14 +63,16 @@ export class DashboardClient {
 	}
 
 	private async send(path: string, body?: unknown): Promise<Response> {
-		return this.fetchFn(new URL(path, this.baseUrl), {
+		return authenticatedFetch(
+			this.baseUrl,
+			this.credential,
+			this.fetchFn
+		)(new URL(path, this.baseUrl), {
 			method: body === undefined ? 'GET' : 'POST',
 			signal: AbortSignal.timeout(15_000),
 			redirect: 'error',
 			headers: {
-				'content-type': 'application/json',
-				'CF-Access-Client-Id': this.credential.clientId,
-				'CF-Access-Client-Secret': this.credential.clientSecret
+				'content-type': 'application/json'
 			},
 			body: body === undefined ? undefined : JSON.stringify(body)
 		});
