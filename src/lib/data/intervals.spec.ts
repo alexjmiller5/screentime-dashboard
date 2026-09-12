@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveDailyUsage, deriveHourlyUsage } from './intervals';
+import { deriveDailyUsage, deriveHourlyUsage, sessionsFromEvents } from './intervals';
 import type { FocusEvent } from './infocus';
 
 const TZ = 'America/New_York';
@@ -8,6 +8,20 @@ const ev = (iso: string, bundleId: string, focus: boolean): FocusEvent => ({
 	tsMs: at(iso),
 	bundleId,
 	focus
+});
+
+it('distinguishes explicit focus pairs from capped or inferred intervals', () => {
+	const sessions = sessionsFromEvents(
+		[
+			ev('2026-01-01T09:00:00Z', 'app', true),
+			ev('2026-01-01T09:10:00Z', 'app', true),
+			ev('2026-01-01T09:20:00Z', 'app', false),
+			ev('2026-01-01T10:00:00Z', 'long', true),
+			ev('2026-01-01T16:00:00Z', 'long', false)
+		],
+		4 * 3600000
+	);
+	expect(sessions.map((s) => s.estimated ?? false)).toEqual([true, false, true]);
 });
 
 describe('deriveDailyUsage', () => {

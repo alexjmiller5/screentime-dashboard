@@ -15,6 +15,7 @@
 		IconEdit,
 		IconTable,
 		IconChartBar,
+		IconClock,
 		IconAdjustmentsHorizontal,
 		IconApps,
 		IconCalendarWeek,
@@ -39,7 +40,7 @@
 	import DevicesDialog from '$lib/components/DevicesDialog.svelte';
 	import MarkersDialog from '$lib/components/MarkersDialog.svelte';
 	import type { Marker, MarkerInput } from '$lib/viz/markers';
-	import type { UsageCache } from '$lib/data/cache';
+	import type { UsageCache, FocusSession } from '$lib/data/cache';
 	import type { RefreshStatus } from '$lib/server/store';
 	import {
 		filterRows,
@@ -51,6 +52,8 @@
 		type Bucket
 	} from '$lib/viz/series';
 	import { appName, formatAverage, formatDuration } from '$lib/viz/format';
+	import { hourlyByApp, timelineByApp, sessionTime } from '$lib/viz/rhythm';
+	import { dateRange } from '$lib/viz/series';
 
 	let cache = $state<UsageCache | null>(null);
 	let loading = $state(true);
@@ -123,8 +126,10 @@
 	let dateStart = $state('');
 	let dateEnd = $state('');
 	let excludedDevices: string[] = $state([]);
-	// Time bucket: week/month bars show AVERAGE daily usage per bucket.
+	// Time bucket: week/month bars show total usage per bucket.
 	let bucket = $state<Bucket>('day');
+	let view = $state<'totals' | 'timeline' | 'hourly'>('totals');
+	const viewLabels = { totals: 'Totals', timeline: 'Timeline', hourly: 'By hour' };
 	// Explicitly picked chart series (empty = every app).
 	let picked = $state<string[]>([]);
 	let savedApps = $state<string[]>([]);
@@ -135,6 +140,32 @@
 		bucket = 'day';
 	}
 	let showTable = $state(false);
+	let sessionData = $state<{ key: string; sessions: FocusSession[] } | null>(null);
+	let sessionError = $state('');
+	let sessionAttempt = $state(0);
+	let timelinePage = $state(0);
+	const sessionKey = $derived(`${cache?.importedAt}|${dateStart}|${dateEnd}`);
+	$effect(() => {
+		const key = sessionKey;
+		void sessionAttempt;
+		if (view !== 'timeline' || !cache || !dateStart || !dateEnd || sessionData?.key === key) return;
+		const controller = new AbortController();
+		sessionError = '';
+		fetch(`/api/usage?${new URLSearchParams({ sessions: '1', start: dateStart, end: dateEnd })}`, {
+			signal: controller.signal
+		})
+			.then(async (response) => {
+				if (!response.ok) throw Error(`Session request failed (${response.status})`);
+				return response.json() as Promise<{ sessions: FocusSession[] }>;
+			})
+			.then((data) => {
+				if (!controller.signal.aborted) sessionData = { key, sessions: data.sessions };
+			})
+			.catch((error) => {
+				if (!controller.signal.aborted) sessionError = String(error);
+			});
+		return () => controller.abort();
+	});
 
 	// All filter selections persist across reloads (like the burndown chart).
 	// A stored PRESET is a rule - it re-anchors to the fresh data bounds via
@@ -150,12 +181,17 @@
 				excludedDevices?: string[];
 				picked?: string[];
 				savedApps?: string[];
+				view?: string;
+				showTable?: boolean;
 			};
 			picked = readSavedApps(p.picked, []);
 			savedApps = readSavedApps(p.savedApps, picked);
-			bucket = p.bucket ?? 'day';
-			excludedDevices = p.excludedDevices ?? [];
-			activePreset = p.preset ?? '90D';
+			bucket = p.bucket === 'week' || p.bucket === 'month' ? p.bucket : 'day';
+			view = p.view === 'timeline' || p.view === 'hourly' ? p.view : 'totals';
+			showTable = p.showTable === true;
+			excludedDevices = readSavedApps(p.excludedDevices, []);
+			activePreset =
+				p.preset === '' || PRESET_LABELS.includes(p.preset as PresetLabel) ? p.preset! : '90D';
 			if (p.preset === '' && p.dateStart && p.dateEnd) {
 				dateStart = p.dateStart;
 				dateEnd = p.dateEnd;
@@ -354,7 +390,9 @@
 				bucket,
 				excludedDevices,
 				picked,
-				savedApps
+				savedApps,
+				view,
+				showTable
 			})
 		)
 	);
@@ -365,7 +403,16 @@
 	// available source wins, so nothing is ever double-counted.
 	const elected = $derived(cache ? electUsage(cache.rows, deviceLabel) : { apps: [], webs: [] });
 	const deviceLabels = $derived(
-		[...new Set([...elected.apps, ...elected.webs].map((r) => deviceLabel(r.device)))].sort()
+		[
+			...new Set(
+				[
+					...elected.apps,
+					...elected.webs,
+					...(cache?.hourly ?? []),
+					...(cache?.sessions ?? [])
+				].map((r) => deviceLabel(r.device))
+			)
+		].sort()
 	);
 	const selectedDevices = $derived(deviceLabels.filter((l) => !excludedDevices.includes(l)));
 	const deviceIcon = (label: string): typeof IconDeviceDesktop =>
@@ -374,7 +421,7 @@
 			: /book|laptop|air/i.test(label)
 				? IconDeviceLaptop
 				: IconDeviceDesktop;
-	const byDevice = (rs: typeof elected.apps): typeof elected.apps =>
+	const byDevice = <T extends { device: string }>(rs: T[]): T[] =>
 		rs.filter((r) => !excludedDevices.includes(deviceLabel(r.device)));
 	const appsDev = $derived(byDevice(elected.apps));
 	const websDev = $derived(byDevice(elected.webs));
@@ -413,35 +460,92 @@
 	const sliderStart = $derived(!dateStart || dateStart < bounds.min ? bounds.min : dateStart);
 	const sliderEnd = $derived(!dateEnd || dateEnd > bounds.max ? bounds.max : dateEnd);
 
-	const rows = $derived(
+	const totalRows = $derived(
 		filterRows(sourceRows, {
 			startDate: dateStart || undefined,
 			endDate: dateEnd || undefined
 		})
 	);
+	const hourRows = $derived(
+		filterRows(byDevice(cache?.hourly ?? []), {
+			startDate: dateStart || undefined,
+			endDate: dateEnd || undefined
+		})
+	);
+	const timeline = $derived(
+		view === 'timeline'
+			? timelineByApp(
+					byDevice(sessionData?.key === sessionKey ? sessionData.sessions : []),
+					cache?.timeZone ?? 'UTC',
+					dateStart,
+					dateEnd,
+					bucket,
+					appName
+				)
+			: undefined
+	);
+	const rows = $derived(
+		view === 'totals'
+			? totalRows
+			: view === 'hourly'
+				? hourRows.map((r) => ({ ...r, source: 'infocus' as const }))
+				: (timeline?.points ?? []).map((p) => ({
+						source: 'infocus' as const,
+						device: p.device,
+						date: p.date,
+						bundleId: p.key,
+						seconds: p.seconds
+					}))
+	);
+	const filteredTimeline = $derived(
+		timeline && {
+			...timeline,
+			points: timeline.points.filter((p) => !picked.length || picked.includes(p.key))
+		}
+	);
+	$effect(() => {
+		void filteredTimeline;
+		timelinePage = 0;
+	});
 
 	// Every app is its own series (picks act as a filter).
 	const stacked = $derived(dailyByApp(rows, appName, picked));
-	const bucketed = $derived(bucketize(stacked, bucket));
+	const bucketed = $derived(
+		view === 'hourly'
+			? hourlyByApp(hourRows, appName, picked)
+			: view === 'timeline'
+				? { dates: timeline?.dates ?? [], series: [] }
+				: bucketize(stacked, bucket)
+	);
 	// Overall daily average across EVERYTHING currently filtered (apps picked,
 	// devices, date range), over the days the range spans.
-	const avgPerDay = $derived(
-		stacked.dates.length > 0
-			? rows
-					.filter((r) => picked.length === 0 || picked.includes(appName(r.bundleId)))
-					.reduce((a, r) => a + r.seconds, 0) / stacked.dates.length
-			: 0
+	const totalSeconds = $derived(
+		rows
+			.filter((r) => !picked.length || picked.includes(appName(r.bundleId)))
+			.reduce((sum, r) => sum + r.seconds, 0)
 	);
+	const avgPerDay = $derived(totalSeconds / Math.max(1, dateRange(dateStart, dateEnd).length));
 	const ranked = $derived(topApps(rows, Infinity, appName));
+	const availableKeys = $derived(new Set(ranked.map((r) => r.bundleId)));
+	const secondsByKey = $derived(new Map(ranked.map((r) => [r.bundleId, r.seconds])));
+	const candidates = $derived(
+		topApps(
+			[...totalRows, ...hourRows.map((r) => ({ ...r, source: 'infocus' as const }))],
+			Infinity,
+			appName
+		)
+			.map((r) => ({ ...r, seconds: secondsByKey.get(r.bundleId) ?? 0 }))
+			.sort((a, b) => b.seconds - a.seconds)
+	);
 	// Display key -> raw bundle id, for App Store icon lookups in the chart.
-	const rawFor = $derived(Object.fromEntries(ranked.map((t) => [t.bundleId, t.raw])));
+	const rawFor = $derived(Object.fromEntries(candidates.map((t) => [t.bundleId, t.raw])));
 
 	// Every app in range is selectable; the search box makes the long tail
 	// reachable. Picked entries stay listed even when they don't match, so a
 	// search can never hide what's currently on the chart.
 	let pickQuery = $state('');
 	const pickCandidates = $derived(
-		ranked.filter(
+		candidates.filter(
 			(t) =>
 				picked.includes(t.bundleId) ||
 				t.bundleId.toLowerCase().includes(pickQuery.trim().toLowerCase())
@@ -449,6 +553,9 @@
 	);
 	function togglePick(key: string): void {
 		picked = picked.includes(key) ? picked.filter((k) => k !== key) : [...picked, key];
+	}
+	function toggleLegend(key: string): void {
+		picked = (picked.length ? picked : ranked.map((r) => r.bundleId)).filter((k) => k !== key);
 	}
 </script>
 
@@ -608,7 +715,12 @@
 				</Select.Content>
 			</Select.Root>
 
-			<Select.Root type="single" value={bucket} onValueChange={(v) => (bucket = v as Bucket)}>
+			<Select.Root
+				type="single"
+				value={bucket}
+				onValueChange={(v) => (bucket = v as Bucket)}
+				disabled={view === 'hourly'}
+			>
 				<Select.Trigger>
 					<IconCalendarStats size={16} class="text-muted-foreground" />
 					{bucket === 'day' ? 'Daily' : bucket === 'week' ? 'Weekly' : 'Monthly'}
@@ -617,6 +729,17 @@
 					<Select.Item value="day" label="Daily" />
 					<Select.Item value="week" label="Weekly" />
 					<Select.Item value="month" label="Monthly" />
+				</Select.Content>
+			</Select.Root>
+
+			<Select.Root type="single" value={view} onValueChange={(v) => (view = v as typeof view)}>
+				<Select.Trigger aria-label="Chart view"
+					><IconClock size={16} class="text-muted-foreground" />{viewLabels[view]}</Select.Trigger
+				>
+				<Select.Content>
+					<Select.Item value="totals" label="Totals" />
+					<Select.Item value="timeline" label="Timeline" />
+					<Select.Item value="hourly" label="By hour" />
 				</Select.Content>
 			</Select.Root>
 
@@ -666,6 +789,7 @@
 					{#each pickCandidates as t (t.bundleId)}
 						{@const icon = iconUrl(t.bundleId, t.raw)}
 						<DropdownMenu.CheckboxItem
+							disabled={!availableKeys.has(t.bundleId)}
 							checked={picked.includes(t.bundleId)}
 							closeOnSelect={false}
 							onCheckedChange={() => togglePick(t.bundleId)}
@@ -690,7 +814,8 @@
 			<Select.Root
 				type="multiple"
 				value={selectedDevices}
-				onValueChange={(v) => (excludedDevices = deviceLabels.filter((l) => !v.includes(l)))}
+				onValueChange={(v) =>
+					(excludedDevices = v.length ? deviceLabels.filter((l) => !v.includes(l)) : [])}
 			>
 				<Select.Trigger>
 					<IconDevices size={16} class="text-muted-foreground" />
@@ -726,31 +851,120 @@
 
 		<!-- main chart -->
 		<section class="rounded-lg border bg-card p-4 sm:p-6">
-			<div class="mb-3 flex items-center justify-between gap-3">
-				<div class="flex items-baseline gap-3">
+			<div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+				<div class="flex flex-wrap items-baseline gap-3">
 					<h2 class="text-sm font-medium">
-						{bucket === 'day'
-							? 'Daily usage by app'
-							: bucket === 'week'
-								? 'Weekly usage by app'
-								: 'Monthly usage by app'}
+						{view === 'timeline'
+							? 'When apps were used'
+							: view === 'hourly'
+								? 'Usage by hour of day'
+								: bucket === 'day'
+									? 'Daily usage by app'
+									: bucket === 'week'
+										? 'Weekly usage by app'
+										: 'Monthly usage by app'}
 					</h2>
 					<span class="text-xs text-muted-foreground tabular-nums">
-						{formatAverage(avgPerDay, bucket)}
+						{view === 'totals'
+							? formatAverage(avgPerDay, bucket)
+							: `${formatDuration(totalSeconds)} total`}
 					</span>
 				</div>
 				<Button variant="ghost" size="sm" onclick={() => (showTable = !showTable)}>
 					{#if showTable}<IconChartBar size={16} />Chart{:else}<IconTable size={16} />Table{/if}
 				</Button>
 			</div>
-			{#if showTable}
-				<DataTable data={bucketed} />
+			{#if view !== 'totals'}
+				<p class="mb-3 text-xs text-muted-foreground">
+					{view === 'timeline'
+						? 'Focus-derived app sessions at their local clock times. Overlapping usage appears side by side.'
+						: 'Total focus-derived app usage in each hour across the selected dates, not a daily average.'}
+					{cache.timeZone}. Focus history only; websites and daily-only history have no timing
+					detail, so totals can differ. Totals include estimated intervals when end events are
+					missing or sessions exceed the four-hour cap.
+				</p>
+			{/if}
+			{#if view === 'timeline' && sessionError}
+				<p class="py-8 text-sm text-destructive" role="alert">{sessionError}</p>
+				<Button
+					variant="outline"
+					size="sm"
+					onclick={() => {
+						sessionAttempt++;
+					}}>Retry session history</Button
+				>
+			{:else if view === 'timeline' && sessionData?.key !== sessionKey}
+				<p class="py-16 text-center text-sm text-muted-foreground" role="status">
+					Loading session history…
+				</p>
+			{:else if view !== 'totals' && totalSeconds === 0}
+				<p class="py-16 text-center text-sm text-muted-foreground" role="status">
+					No {view === 'timeline' ? 'session' : 'hourly'} history for these dates, devices, and apps.
+				</p>
+			{:else if showTable && filteredTimeline}
+				<div class="max-h-96 overflow-auto rounded-lg border">
+					<table class="w-full text-sm">
+						<thead class="sticky top-0 bg-secondary"
+							><tr
+								>{#each ['Date', 'Time', 'App', 'Device', 'Duration'] as heading}<th
+										class="px-3 py-2 text-left font-medium">{heading}</th
+									>{/each}</tr
+							></thead
+						>
+						<tbody
+							>{#each filteredTimeline.points.slice(timelinePage * 100, (timelinePage + 1) * 100) as point}<tr
+									class="border-t"
+									><td class="px-3 py-2 whitespace-nowrap">{point.date}</td><td
+										class="px-3 py-2 whitespace-nowrap"
+										>{sessionTime(point.startMs, cache.timeZone)} - {sessionTime(
+											point.endMs,
+											cache.timeZone
+										)}</td
+									><td class="px-3 py-2">{point.key}</td><td class="px-3 py-2"
+										>{deviceLabel(point.device)}</td
+									><td class="px-3 py-2 whitespace-nowrap"
+										>{formatDuration(point.seconds)}{point.estimated ? ' · estimated' : ''}</td
+									></tr
+								>{/each}</tbody
+						>
+					</table>
+				</div>
+				<div
+					class="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"
+				>
+					<span
+						>{timelinePage * 100 + 1}-{Math.min(
+							(timelinePage + 1) * 100,
+							filteredTimeline.points.length
+						)} of {filteredTimeline.points.length} intervals, split at hour boundaries</span
+					>
+					<div class="flex gap-2">
+						<Button
+							variant="outline"
+							size="sm"
+							disabled={timelinePage === 0}
+							onclick={() => timelinePage--}>Previous</Button
+						><Button
+							variant="outline"
+							size="sm"
+							disabled={(timelinePage + 1) * 100 >= filteredTimeline.points.length}
+							onclick={() => timelinePage++}>Next</Button
+						>
+					</div>
+				</div>
+			{:else if showTable}
+				<DataTable data={bucketed} hourly={view === 'hourly'} />
 			{:else}
 				<StackedChart
 					data={bucketed}
 					kind="stacked-bar"
 					{bucket}
 					{rawFor}
+					hourly={view === 'hourly'}
+					timeline={filteredTimeline}
+					{deviceLabel}
+					timeZone={cache.timeZone}
+					onToggle={toggleLegend}
 					markers={markers.filter((m) => m.date >= dateStart && m.date <= dateEnd)}
 				/>
 			{/if}

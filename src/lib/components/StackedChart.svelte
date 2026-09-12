@@ -24,6 +24,7 @@
 	import { readChartTheme, type ChartTheme } from '$lib/viz/theme';
 	import { appColor, paletteIndex, formatDuration } from '$lib/viz/format';
 	import { iconUrl } from '$lib/viz/icons.svelte';
+	import { clockHour, sessionTime, type Timeline } from '$lib/viz/rhythm';
 
 	Chart.register(
 		BarController,
@@ -50,6 +51,11 @@
 		rawFor?: Record<string, string>;
 		/** Pass markers filtered to the selected date window (before bucketing). */
 		markers?: Marker[];
+		hourly?: boolean;
+		timeline?: Timeline;
+		deviceLabel?: (id: string) => string;
+		onToggle?: (key: string) => void;
+		timeZone?: string;
 	}
 	const {
 		data,
@@ -57,7 +63,12 @@
 		bucket = 'day',
 		labelFor = (k) => k,
 		rawFor = {},
-		markers = []
+		markers = [],
+		hourly = false,
+		timeline,
+		deviceLabel = (id) => id,
+		onToggle,
+		timeZone = 'UTC'
 	}: Props = $props();
 
 	let canvas: HTMLCanvasElement;
@@ -66,7 +77,7 @@
 		{ key: number; x: number; top: number; left: number; width: number; events: Marker[] }[]
 	>([]);
 	const visibleMarkers = $derived(
-		markers.filter((m) => markerBucketIndex(m.date, data.dates, bucket) >= 0)
+		hourly ? [] : markers.filter((m) => markerBucketIndex(m.date, data.dates, bucket) >= 0)
 	);
 	const markerTooltip = (items: { dataIndex: number }[]) =>
 		visibleMarkers
@@ -80,14 +91,17 @@
 			afterLayout(c) {
 				const grouped = new Map<number, Marker[]>();
 				for (const marker of visibleMarkers) {
-					const i = markerBucketIndex(marker.date, data.dates, bucket);
+					const day = timeline?.days.find((d) => d.date === marker.date);
+					const i = day
+						? day.x + day.width / 2
+						: markerBucketIndex(marker.date, data.dates, bucket);
 					grouped.set(i, [...(grouped.get(i) ?? []), marker]);
 				}
 				const placed: { lane: number; left: number; right: number }[] = [];
 				positions = [];
 				for (const [i, events] of [...grouped].sort((a, b) => a[0] - b[0])) {
 					const x = c.scales.x.getPixelForValue(
-						bucket === 'month' ? i : dayjs(data.dates[i]).valueOf()
+						timeline ? i : bucket === 'month' ? i : dayjs(data.dates[i]).valueOf()
 					);
 					if (x < c.chartArea.left || x > c.chartArea.right) continue;
 					const label = events[0].title + (events.length > 1 ? ` (+${events.length - 1})` : '');
@@ -179,6 +193,12 @@
 				font: { size: 11 }
 			}
 		};
+		if (hourly)
+			return {
+				...common,
+				type: 'category' as const,
+				title: { display: true, text: 'Hour of day', color: theme.mutedInk }
+			};
 		if (bucket === 'month') {
 			return {
 				...common,
@@ -224,6 +244,7 @@
 	const tooltipTitle = (items: { dataIndex: number }[]): string => {
 		const raw = data.dates[items[0]?.dataIndex ?? -1];
 		if (!raw) return '';
+		if (hourly) return `${raw} - ${clockHour((items[0]?.dataIndex ?? 0) + 1)}`;
 		if (bucket === 'month') return dayjs(raw).format('MMMM YYYY');
 		if (bucket === 'week') return `Week of ${dayjs(raw).format('MMM D, YYYY')}`;
 		return dayjs(raw).format('ddd, MMM D, YYYY');
@@ -286,6 +307,7 @@
 				scales: scaleOptions(theme, kind === 'stacked-bar'),
 				plugins: {
 					legend: {
+						onClick: (_event: unknown, item: { text: string }) => onToggle?.(item.text),
 						display: data.series.length > 1,
 						position: 'bottom' as const,
 						labels: {
@@ -306,7 +328,9 @@
 							title: tooltipTitle,
 							beforeBody: markerTooltip,
 							label: (item: { dataset: { label?: string }; parsed: { y: number | null } }) =>
-								`${item.dataset.label}: ${formatDuration((item.parsed.y ?? 0) * 3600)}`
+								`${item.dataset.label}: ${formatDuration((item.parsed.y ?? 0) * 3600)}`,
+							footer: (items: { parsed: { y: number | null } }[]) =>
+								`Total: ${formatDuration(items.reduce((sum, item) => sum + (item.parsed.y ?? 0), 0) * 3600)}`
 						}
 					}
 				}
@@ -417,6 +441,153 @@
 		};
 	}
 
+	function timelineConfig(theme: ChartTheme, color: (key: string) => string) {
+		const value = timeline!;
+		const keys = [...new Set(value.points.map((p) => p.key))];
+		return {
+			type: 'bar' as const,
+			data: {
+				datasets: [
+					{
+						data: value.points,
+						grouped: false,
+						backgroundColor: value.points.map((p) => color(p.key)),
+						borderWidth: 0,
+						borderRadius: 1,
+						borderSkipped: false,
+						minBarLength: 1,
+						barThickness: 1
+					}
+				]
+			},
+			options: {
+				responsive: true,
+				maintainAspectRatio: false,
+				animation: false as const,
+				interaction: { mode: 'nearest' as const, intersect: true },
+				scales: {
+					x: {
+						type: 'linear' as const,
+						offset: false,
+						min: 0,
+						max: Math.max(1, value.dates.length),
+						afterBuildTicks: (scale: { ticks: { value: number }[] }) => {
+							scale.ticks = value.dates.map((_, i) => ({ value: i + 0.5 }));
+						},
+						grid: { display: false },
+						border: { color: theme.gridline },
+						ticks: {
+							color: theme.mutedInk,
+							maxRotation: 0,
+							autoSkip: true,
+							maxTicksLimit: 10,
+							callback: (v: number | string) => {
+								const date = value.dates[Math.floor(Number(v))];
+								return date ? dayjs(date).format(bucket === 'month' ? 'MMM YYYY' : 'MMM D') : '';
+							}
+						}
+					},
+					y: {
+						type: 'linear' as const,
+						min: 0,
+						max: 24,
+						reverse: true,
+						grid: { color: theme.gridline },
+						border: { display: false },
+						ticks: {
+							stepSize: 2,
+							color: theme.mutedInk,
+							callback: (v: number | string) => clockHour(Number(v))
+						}
+					}
+				},
+				plugins: {
+					legend: {
+						display: keys.length <= MANY_SERIES,
+						position: 'bottom' as const,
+						onClick: (_event: unknown, item: { text: string }) => onToggle?.(item.text),
+						labels: {
+							color: theme.ink,
+							usePointStyle: true,
+							boxHeight: 14,
+							pointStyleWidth: 16,
+							generateLabels: () =>
+								keys.map((key) => ({
+									text: key,
+									fillStyle: color(key),
+									strokeStyle: theme.surface,
+									pointStyle: pointStyle(key),
+									hidden: false
+								}))
+						}
+					},
+					tooltip: {
+						...tooltipBase(theme),
+						callbacks: {
+							title: (items: { dataIndex: number }[]) => {
+								const p = value.points[items[0]?.dataIndex];
+								return p
+									? `${p.date} · ${sessionTime(p.startMs, timeZone)} - ${sessionTime(p.endMs, timeZone)}`
+									: '';
+							},
+							label: (item: { dataIndex: number }) => {
+								const p = value.points[item.dataIndex];
+								return `${p.key}: ${formatDuration(p.seconds)} · ${deviceLabel(p.device)}${p.estimated ? ' · estimated' : ''}`;
+							},
+							labelPointStyle: (item: { dataIndex: number }) => ({
+								pointStyle: pointStyle(value.points[item.dataIndex].key),
+								rotation: 0
+							})
+						}
+					}
+				}
+			}
+		};
+	}
+
+	function timelinePlugin(theme: ChartTheme): Plugin {
+		return {
+			id: 'timelineDays',
+			afterDatasetsUpdate(c) {
+				if (!timeline) return;
+				c.getDatasetMeta(0).data.forEach((element, i) => {
+					const p = timeline!.points[i];
+					Object.assign(element, {
+						width: Math.max(
+							0.5,
+							Math.abs(
+								c.scales.x.getPixelForValue(p.x + p.width / 2) -
+									c.scales.x.getPixelForValue(p.x - p.width / 2)
+							) - 1
+						)
+					});
+				});
+			},
+			beforeDatasetsDraw(c) {
+				if (!timeline) return;
+				c.ctx.save();
+				for (const day of timeline.days) {
+					const x = c.scales.x.getPixelForValue(day.x);
+					if (!day.selected) {
+						c.ctx.fillStyle = theme.gridline;
+						c.ctx.fillRect(
+							x,
+							c.chartArea.top,
+							c.scales.x.getPixelForValue(day.x + day.width) - x,
+							c.chartArea.height
+						);
+					}
+					c.ctx.strokeStyle = Number.isInteger(day.x) ? theme.mutedInk : theme.gridline;
+					c.ctx.beginPath();
+					c.ctx.moveTo(x, c.chartArea.top);
+					c.ctx.lineTo(x, c.chartArea.bottom);
+					c.ctx.stroke();
+				}
+				c.ctx.restore();
+			}
+		};
+	}
+
 	function render(): void {
 		if (!canvas) return;
 		chart?.destroy();
@@ -424,15 +595,16 @@
 		// Each series wears its app's brand color; unknown apps hash to a stable
 		// token-palette slot so color follows the entity, never its rank.
 		const color = (key: string): string => appColor(key) ?? theme.series[paletteIndex(key)];
-		const config =
-			kind === 'stacked-bar' && data.series.length > MANY_SERIES
+		const config = timeline
+			? timelineConfig(theme, color)
+			: kind === 'stacked-bar' && data.series.length > MANY_SERIES
 				? rankedConfig(theme, color)
 				: perAppConfig(theme, color);
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		chart = new Chart(canvas, {
 			...config,
 			options: { ...config.options, layout: { padding: { top: visibleMarkers.length ? 80 : 0 } } },
-			plugins: [markerPlugin(theme)]
+			plugins: [markerPlugin(theme), timelinePlugin(theme)]
 		} as any);
 	}
 
@@ -442,33 +614,44 @@
 		void kind;
 		void markers;
 		void bucket;
+		void hourly;
+		void timeline;
 		render();
 	});
 </script>
 
-<div class="relative h-[320px] w-full sm:h-[420px]">
-	<canvas
-		bind:this={canvas}
-		aria-label="Screen Time usage chart. Event markers are also listed below."
-	></canvas>
-	<MarkerTooltip.Provider>
-		{#each markerLabels as position (position.key)}
-			<MarkerTooltip.Root ignoreNonKeyboardFocus={false}>
-				<MarkerTooltip.Trigger
-					class="absolute h-6 truncate rounded bg-card px-1 text-center text-xs text-foreground outline-offset-2 focus-visible:outline-2"
-					style={`left:${position.left}px;top:${position.top}px;width:${position.width}px`}
-					aria-label={position.events.map((m) => `${m.date}: ${m.title}`).join('; ')}
-				>
-					{position.events[0].title}{position.events.length > 1
-						? ` (+${position.events.length - 1})`
-						: ''}
-				</MarkerTooltip.Trigger>
-				<MarkerTooltip.Content class="block max-h-60 max-w-xs overflow-y-auto break-words">
-					{#each position.events as marker (marker.id)}<p>{marker.date}: {marker.title}</p>{/each}
-				</MarkerTooltip.Content>
-			</MarkerTooltip.Root>
-		{/each}
-	</MarkerTooltip.Provider>
+<div class="overflow-x-auto">
+	<div
+		class="relative h-[320px] w-full sm:h-[420px]"
+		style:min-width={timeline ? `${timeline.days.length * 6}px` : undefined}
+	>
+		<canvas
+			bind:this={canvas}
+			aria-label={timeline
+				? 'App usage timeline, midnight to midnight. Dates run left to right.'
+				: hourly
+					? 'Total app usage for each of the 24 hours of the day. Use Table for the values.'
+					: 'Screen Time usage chart. Event markers are also listed below.'}
+		></canvas>
+		<MarkerTooltip.Provider>
+			{#each markerLabels as position (position.key)}
+				<MarkerTooltip.Root ignoreNonKeyboardFocus={false}>
+					<MarkerTooltip.Trigger
+						class="absolute h-6 truncate rounded bg-card px-1 text-center text-xs text-foreground outline-offset-2 focus-visible:outline-2"
+						style={`left:${position.left}px;top:${position.top}px;width:${position.width}px`}
+						aria-label={position.events.map((m) => `${m.date}: ${m.title}`).join('; ')}
+					>
+						{position.events[0].title}{position.events.length > 1
+							? ` (+${position.events.length - 1})`
+							: ''}
+					</MarkerTooltip.Trigger>
+					<MarkerTooltip.Content class="block max-h-60 max-w-xs overflow-y-auto break-words">
+						{#each position.events as marker (marker.id)}<p>{marker.date}: {marker.title}</p>{/each}
+					</MarkerTooltip.Content>
+				</MarkerTooltip.Root>
+			{/each}
+		</MarkerTooltip.Provider>
+	</div>
 </div>
 
 {#if visibleMarkers.length}

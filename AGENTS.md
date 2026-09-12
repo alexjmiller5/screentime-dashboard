@@ -134,6 +134,25 @@ adapter and compiler options live in `vite.config.ts` inside the
 
 ## UI conventions
 
+- **Chart views** share the date window, devices and app selection, saved with
+  the selected view and table state in `screentime:prefs`. Totals uses elected
+  daily measurements; By hour sums focus-derived hourly history into 24 bars
+  and disables bucketing. Timeline loads focus sessions on demand from committed
+  originals, split at local hour boundaries, on a midnight-to-midnight axis.
+  Tooltips and table times include UTC offsets; capped or inferred intervals
+  are flagged as estimated. The interval table pages 100 rows at a time.
+  Weekly and monthly buckets reserve all calendar days, including unselected
+  edge days; overlapping sessions use separate lanes. Both timing views label
+  their limited coverage and inclusion of estimated intervals, and exclude
+  daily-only website measurements.
+- `UsageCache.sessions` is optional for compatibility with aggregate-only
+  history. Derive it from committed focus events without changing stored
+  originals or the import protocol. When the derived response shape changes,
+  change the usage route's cache namespaces so old cached responses expire
+  independently of the last import timestamp. `GET /api/usage?sessions=1&start=YYYY-MM-DD&end=YYYY-MM-DD`
+  returns only session candidates for that date window (with UTC-offset padding);
+  ordinary usage responses omit sessions.
+
 - **Saved apps** is a browser-local preset: selected app/site display keys, all devices, daily buckets; date range stays unchanged. Save from the app picker. Existing picked apps initialize the preset; `?saveApps=<JSON string array>` installs a preset and removes itself from the URL. Personal selections belong in preferences, never source code.
 
 - **Components: shadcn-svelte** in `src/lib/components/ui/` - that code is

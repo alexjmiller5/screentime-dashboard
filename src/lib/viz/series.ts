@@ -12,7 +12,10 @@ export interface RowFilter {
 	devices?: string[];
 }
 
-export function filterRows(rows: UsageRow[], filter: RowFilter): UsageRow[] {
+export function filterRows<T extends { device: string; date: string; source?: UsageRow['source'] }>(
+	rows: T[],
+	filter: RowFilter
+): T[] {
 	return rows.filter(
 		(r) =>
 			(!filter.source || r.source === filter.source) &&
@@ -40,7 +43,7 @@ export type Bucket = 'day' | 'week' | 'month';
 
 /** Bucket label, mirroring notion-task-burndown-chart: weeks anchor on their
  * Monday (a real date), months on 'YYYY-MM'. */
-function bucketLabel(date: string, bucket: Bucket): string {
+export function bucketLabel(date: string, bucket: Bucket): string {
 	if (bucket === 'day') return date;
 	if (bucket === 'month') return date.slice(0, 7);
 	const [y, m, d] = date.split('-').map(Number);

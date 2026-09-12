@@ -4,6 +4,7 @@
 import {
 	deriveDailyUsage,
 	deriveHourlyUsage,
+	sessionsFromEvents,
 	aggregateSessions,
 	type UsageSession
 } from './intervals';
@@ -34,8 +35,14 @@ export interface UsageCache {
 	/** device uuid -> human label, assigned in the UI (never hardcoded). */
 	devices: Record<string, string>;
 	rows: UsageRow[];
-	/** Per-hour focus-derived usage for the day-rhythm grid (>=30s slices). */
+	/** Per-hour focus-derived usage in local time. */
 	hourly?: HourlyRow[];
+	/** Focus-derived sessions from committed originals, with estimated intervals flagged. */
+	sessions?: FocusSession[];
+}
+
+export interface FocusSession extends UsageSession {
+	device: string;
 }
 
 /** System shell surfaces whose "focus" is not usage: the lock screen holds
@@ -81,9 +88,13 @@ export function buildUsageCache(input: BuildInput): UsageCache {
 	rows.push(...segmentsToRows(input.deviceActivityByDevice ?? {}, input.timeZone));
 
 	const hourly: HourlyRow[] = [];
+	const sessions: FocusSession[] = [];
 	for (const [device, events] of Object.entries(input.focusEventsByDevice)) {
+		for (const session of sessionsFromEvents(events, 4 * 60 * 60 * 1000)) {
+			if (!SHELL_BUNDLE_RE.test(session.bundleId)) sessions.push({ device, ...session });
+		}
 		for (const h of deriveHourlyUsage(events, { timeZone: input.timeZone })) {
-			if (h.seconds >= 30 && !SHELL_BUNDLE_RE.test(h.bundleId)) hourly.push({ device, ...h });
+			if (h.seconds > 0 && !SHELL_BUNDLE_RE.test(h.bundleId)) hourly.push({ device, ...h });
 		}
 	}
 
@@ -113,6 +124,7 @@ export function buildUsageCache(input: BuildInput): UsageCache {
 		timeZone: input.timeZone,
 		devices: input.devices,
 		rows: usageRows,
-		hourly
+		hourly,
+		sessions
 	};
 }
