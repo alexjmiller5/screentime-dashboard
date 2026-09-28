@@ -31,6 +31,7 @@
 //                                            iCloud-evicted file that never arrives is
 //                                            skipped, not waited on forever
 
+import { dlopen, FFIType } from 'bun:ffi';
 import { Database } from 'bun:sqlite';
 import type { JobUpdate } from '../lib/server/refresh-job';
 import { homedir, tmpdir } from 'node:os';
@@ -47,6 +48,23 @@ import {
 	type AttemptState,
 	type PendingRequest
 } from './client';
+
+// launchd starts agents with dataless-file materialization OFF (launchd.plist(5)
+// MaterializeDatalessFiles), so reading an iCloud-evicted snapshot returns
+// EDEADLK instead of downloading it. Opt this process in; the per-file read
+// timeout still bounds a download that never arrives.
+if (process.platform === 'darwin') {
+	const IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES = 3;
+	const IOPOL_SCOPE_PROCESS = 0;
+	const IOPOL_MATERIALIZE_DATALESS_FILES_ON = 2;
+	dlopen('libSystem.B.dylib', {
+		setiopolicy_np: { args: [FFIType.i32, FFIType.i32, FFIType.i32], returns: FFIType.i32 }
+	}).symbols.setiopolicy_np(
+		IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES,
+		IOPOL_SCOPE_PROCESS,
+		IOPOL_MATERIALIZE_DATALESS_FILES_ON
+	);
+}
 
 const env = process.env;
 const log = (msg: string): void => console.log(`[${new Date().toISOString()}] ${msg}`);

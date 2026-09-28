@@ -101,6 +101,11 @@ ingest` fills miniflare's D1 from this Mac's backups folder.
   first and only removes local auth after success. Gotchas: `bun:sqlite`'s `deserialize`
   rejects some larger knowledgeC images, so the CLI opens a temp file; a
   bad file only loses that file, never the snapshot (errors are per file).
+  launchd runs agents with dataless-file materialization OFF, so reading an
+  iCloud-evicted snapshot (the other Mac's, under Optimize Mac Storage) fails
+  with `EDEADLK` instead of downloading; the CLI opts itself in at startup via
+  `setiopolicy_np` (bun:ffi). A shell has it ON, so the bug only shows under
+  launchd.
 
 ## Data model (what the parsers produce)
 
