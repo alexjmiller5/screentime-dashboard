@@ -163,7 +163,9 @@ adapter and compiler options live in `vite.config.ts` inside the
 
 - **Chart views** share the date window, devices and app selection, saved with
   the selected view and table state in `screentime:prefs`. Totals uses elected
-  daily measurements; By hour combines focus-derived app history with recorded
+  daily measurements; the "Measured by" lens (`measuredBy`, Totals only,
+  disabled in the other views) pins one source with no fallback, so a day that
+  source never measured is empty and a flip between sources is visible; By hour combines focus-derived app history with recorded
   website hour totals into 24 bars and disables bucketing. Timeline loads
   focus sessions on demand from committed
   originals, split at local hour boundaries, on a midnight-to-midnight axis.
