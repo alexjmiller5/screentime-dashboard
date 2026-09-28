@@ -166,6 +166,13 @@ export function appOptions(
 		);
 }
 
+/** Lens labels, in election order. */
+export const SOURCE_LABELS: Record<UsageRow['source'], string> = {
+	screentime: 'Apple Screen Time',
+	infocus: 'Focus events',
+	knowledgec: 'knowledgeC'
+};
+
 const SOURCE_RANK: Record<UsageRow['source'], number> = {
 	screentime: 0, // Apple's official aggregates - matches the Settings pane
 	infocus: 1, // our focus-session derivation - fills Screen Time's gaps
@@ -182,8 +189,11 @@ const SOURCE_RANK: Record<UsageRow['source'], number> = {
  */
 export function electUsage(
 	rows: UsageRow[],
-	labelOf: (device: string) => string
+	labelOf: (device: string) => string,
+	/** The "Measured by" lens: pin one source, no fallback (unmeasured days stay empty). */
+	source?: UsageRow['source']
 ): { apps: UsageRow[]; webs: UsageRow[] } {
+	if (source) rows = rows.filter((r) => r.source === source);
 	const webs = rows.filter((r) => r.bundleId.startsWith('web:'));
 	const appRows = rows.filter((r) => !r.bundleId.startsWith('web:'));
 

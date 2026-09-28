@@ -16,6 +16,7 @@
 		IconTable,
 		IconChartBar,
 		IconClock,
+		IconRulerMeasure,
 		IconAdjustmentsHorizontal,
 		IconApps,
 		IconCalendarWeek,
@@ -41,7 +42,7 @@
 	import DevicesDialog from '$lib/components/DevicesDialog.svelte';
 	import MarkersDialog from '$lib/components/MarkersDialog.svelte';
 	import type { Marker, MarkerInput } from '$lib/viz/markers';
-	import type { UsageCache, FocusSession } from '$lib/data/cache';
+	import type { UsageCache, FocusSession, UsageRow } from '$lib/data/cache';
 	import type { RefreshStatus } from '$lib/server/store';
 	import {
 		filterRows,
@@ -49,6 +50,7 @@
 		topApps,
 		appOptions,
 		electUsage,
+		SOURCE_LABELS,
 		combineUsage,
 		bucketize,
 		type Bucket
@@ -138,6 +140,8 @@
 	// Time bucket: week/month bars show total usage per bucket.
 	let bucket = $state<Bucket>('day');
 	let view = $state<'totals' | 'timeline' | 'hourly'>('totals');
+	// "Measured by" lens: '' = best available source per device and day.
+	let measuredBy = $state<UsageRow['source'] | ''>('');
 	const viewLabels = { totals: 'Totals', timeline: 'Timeline', hourly: 'By hour' };
 	// Explicitly picked chart series (empty = every app).
 	let picked = $state<string[]>([]);
@@ -197,12 +201,15 @@
 				savedApps?: string[];
 				view?: string;
 				showTable?: boolean;
+				measuredBy?: string;
 			};
 			picked = readSavedApps(p.picked, []);
 			savedApps = readSavedApps(p.savedApps, picked);
 			bucket = p.bucket === 'week' || p.bucket === 'month' ? p.bucket : 'day';
 			view = p.view === 'timeline' || p.view === 'hourly' ? p.view : 'totals';
 			showTable = p.showTable === true;
+			measuredBy =
+				p.measuredBy && p.measuredBy in SOURCE_LABELS ? (p.measuredBy as UsageRow['source']) : '';
 			excludedDevices = readSavedApps(p.excludedDevices, []);
 			activePreset =
 				p.preset === '' || PRESET_LABELS.includes(p.preset as PresetLabel) ? p.preset! : '90D';
@@ -406,7 +413,8 @@
 				picked,
 				savedApps,
 				view,
-				showTable
+				showTable,
+				measuredBy
 			})
 		)
 	);
@@ -415,7 +423,10 @@
 
 	// Collapse the measurement pipelines: per (device label, day) the best
 	// available source wins, so nothing is ever double-counted.
-	const elected = $derived(cache ? electUsage(cache.rows, deviceLabel) : { apps: [], webs: [] });
+	const elected = $derived(
+		cache ? electUsage(cache.rows, deviceLabel, measuredBy || undefined) : { apps: [], webs: [] }
+	);
+	const measuredSources = $derived(new Set(cache?.rows.map((r) => r.source)));
 	const deviceLabels = $derived(
 		[
 			...new Set(
@@ -775,6 +786,34 @@
 					<Select.Item value="totals" label="Totals" />
 					<Select.Item value="timeline" label="Timeline" />
 					<Select.Item value="hourly" label="By hour" />
+				</Select.Content>
+			</Select.Root>
+
+			<Select.Root
+				type="single"
+				value={measuredBy}
+				onValueChange={(v) => (measuredBy = v as typeof measuredBy)}
+				disabled={view !== 'totals'}
+			>
+				<Select.Trigger
+					aria-label="Measured by"
+					title="Which measurement counts per device and day. Pinning a source shows only its days, with no fallback."
+					class={measuredBy
+						? 'border-primary bg-primary text-primary-foreground dark:bg-primary dark:hover:bg-primary/90'
+						: ''}
+				>
+					<IconRulerMeasure size={16} class={measuredBy ? '' : 'text-muted-foreground'} />
+					{measuredBy ? SOURCE_LABELS[measuredBy] : 'Best available'}
+				</Select.Trigger>
+				<Select.Content>
+					<Select.Item value="" label="Best available" />
+					{#each Object.entries(SOURCE_LABELS) as [source, label] (source)}
+						<Select.Item
+							value={source}
+							{label}
+							disabled={!measuredSources.has(source as UsageRow['source'])}
+						/>
+					{/each}
 				</Select.Content>
 			</Select.Root>
 

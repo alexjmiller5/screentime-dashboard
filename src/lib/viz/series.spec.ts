@@ -195,6 +195,26 @@ describe('electUsage', () => {
 		]);
 	});
 
+	it('pins one source when measured-by is set: no fallback, websites only with Screen Time', () => {
+		const rows = [
+			row('2026-01-05', 'com.a', 100, 'biome-1', 'infocus'),
+			row('2026-01-05', 'com.a', 120, 'da-1', 'screentime'),
+			row('2026-01-05', 'web:youtube.com', 60, 'da-1', 'screentime'),
+			row('2026-01-06', 'com.a', 50, 'biome-1', 'infocus') // Screen Time gap day
+		];
+		expect(electUsage(rows, labelOf, 'infocus')).toEqual({
+			apps: [
+				row('2026-01-05', 'com.a', 100, 'biome-1', 'infocus'),
+				row('2026-01-06', 'com.a', 50, 'biome-1', 'infocus')
+			],
+			webs: []
+		});
+		expect(electUsage(rows, labelOf, 'screentime')).toEqual({
+			apps: [row('2026-01-05', 'com.a', 120, 'da-1', 'screentime')],
+			webs: [row('2026-01-05', 'web:youtube.com', 60, 'da-1', 'screentime')]
+		});
+	});
+
 	it('falls back to knowledgec when it is the only measurement', () => {
 		const rows = [row('2026-01-05', 'com.mac', 400, 'knowledgec', 'knowledgec')];
 		expect(electUsage(rows, (d) => d).apps).toEqual(rows);
