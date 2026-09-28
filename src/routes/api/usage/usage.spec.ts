@@ -23,12 +23,10 @@ vi.mock('$lib/server/store', () => ({
 				}
 			]
 		};
-		return new TextEncoder().encode(
-			JSON.stringify(
-				name === 'sessions'
-					? { sessions: data.sessions, importedAt: data.importedAt }
-					: { ...data, sessions: undefined }
-			)
+		return JSON.stringify(
+			name === 'sessions'
+				? { sessions: data.sessions, importedAt: data.importedAt }
+				: { ...data, sessions: undefined }
 		);
 	}
 }));
