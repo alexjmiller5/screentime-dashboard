@@ -172,52 +172,55 @@ export function ingestStatements(chunk: IngestChunk, now: string): Statement[] {
 }
 
 export type DerivedName = 'summary' | 'sessions';
-export const DERIVED_CHUNK_BYTES = 1_000_000;
+/** UTF-16 units per chunk: at most 3 bytes each, so a chunk stays under
+ * D1's 2 MB per-value cap. Text, not BLOB: D1 ships BLOB binds as JSON
+ * number arrays, which multiplies the payload several times over. */
+export const DERIVED_CHUNK_CHARS = 500_000;
 
-/** The /api/usage document bytes for the current data version. Served from
- * the `derived` table; a miss (new version, first deploy) rebuilds history
- * once and stores both documents. */
+function chunkText(text: string, size: number): string[] {
+	const chunks: string[] = [];
+	for (let start = 0; start < text.length || chunks.length === 0;) {
+		let end = Math.min(start + size, text.length);
+		// Never split a surrogate pair across rows.
+		if (end < text.length && /[\uDC00-\uDFFF]/.test(text[end])) end--;
+		chunks.push(text.slice(start, end));
+		start = end;
+	}
+	return chunks;
+}
+
+/** The /api/usage document for the current data version. Served from the
+ * `derived` table; a miss (new version, first deploy) rebuilds history once
+ * and stores both documents. */
 export async function readDerived(
 	db: D1Database,
 	name: DerivedName,
-	chunkBytes = DERIVED_CHUNK_BYTES
-): Promise<Uint8Array<ArrayBuffer> | null> {
+	chunkChars = DERIVED_CHUNK_CHARS
+): Promise<string | null> {
 	const meta = await readMeta(db);
 	const version = meta.data_updated_at ?? meta.imported_at;
 	if (!version) return null;
 	const stored = await db
 		.prepare('SELECT body FROM derived WHERE name = ? AND version = ? ORDER BY chunk')
 		.bind(name, version)
-		.all<{ body: ArrayBuffer | Uint8Array }>();
-	if (stored.results.length) {
-		const parts = stored.results.map((r) => new Uint8Array(r.body));
-		const out = new Uint8Array(parts.reduce((n, p) => n + p.byteLength, 0));
-		let offset = 0;
-		for (const p of parts) {
-			out.set(p, offset);
-			offset += p.byteLength;
-		}
-		return out;
-	}
+		.all<{ body: string }>();
+	if (stored.results.length) return stored.results.map((r) => r.body).join('');
 	const data = await readUsageCache(db);
 	if (!data) return null;
-	const docs: Record<DerivedName, Uint8Array<ArrayBuffer>> = {
-		summary: new TextEncoder().encode(JSON.stringify({ ...data, sessions: undefined })),
-		sessions: new TextEncoder().encode(
-			JSON.stringify({ sessions: data.sessions ?? [], importedAt: data.importedAt })
-		)
+	const docs: Record<DerivedName, string> = {
+		summary: JSON.stringify({ ...data, sessions: undefined }),
+		sessions: JSON.stringify({ sessions: data.sessions ?? [], importedAt: data.importedAt })
 	};
-	const stmts: D1PreparedStatement[] = [];
-	for (const [docName, bytes] of Object.entries(docs)) {
-		stmts.push(db.prepare('DELETE FROM derived WHERE name = ?').bind(docName));
-		for (let i = 0; i * chunkBytes < bytes.byteLength || (i === 0 && !bytes.byteLength); i++)
-			stmts.push(
+	for (const [docName, text] of Object.entries(docs)) {
+		await db.batch([
+			db.prepare('DELETE FROM derived WHERE name = ?').bind(docName),
+			...chunkText(text, chunkChars).map((body, i) =>
 				db
 					.prepare('INSERT INTO derived (name, version, chunk, body) VALUES (?, ?, ?, ?)')
-					.bind(docName, version, i, bytes.slice(i * chunkBytes, (i + 1) * chunkBytes))
-			);
+					.bind(docName, version, i, body)
+			)
+		]);
 	}
-	await db.batch(stmts);
 	return docs[name];
 }
 

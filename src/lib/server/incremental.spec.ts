@@ -464,11 +464,8 @@ it('bounds cleanup work per begin rather than sweeping the whole expired backlog
 it('serves derived documents from the store until the data version changes', async () => {
 	expect(await readDerived(db, 'summary')).toBeNull();
 	await upload();
-	const decode = (bytes: Uint8Array | null) =>
-		JSON.parse(new TextDecoder().decode(bytes!)) as {
-			rows: { seconds: number }[];
-			sessions?: unknown;
-		};
+	const decode = (text: string | null) =>
+		JSON.parse(text!) as { rows: { seconds: number }[]; sessions?: unknown };
 	const first = decode(await readDerived(db, 'summary', 64));
 	expect(first.rows.some((r) => r.seconds === 60)).toBe(true);
 	expect(first.sessions).toBeUndefined();
