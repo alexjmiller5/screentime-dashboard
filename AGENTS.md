@@ -16,9 +16,14 @@ snapshots. Private site - Alex only, via Cloudflare Access.
   checks completeness, then switches the file's active contribution. Failed
   reads/uploads retain the prior contribution. Overlapping focus events and
   sessions deduplicate before aggregation; newer DeviceActivity segments win.
-  `readUsageCache` derives from committed contributions; the usage route caches
-  the derived response by data version behind Access. Inactive staged uploads
-  expire after seven days. Aggregate-only rows
+  `readUsageCache` derives from committed contributions, but never on a page
+  load: `readDerived` serves the `/api/usage` summary and sessions documents
+  from the `derived` table (BLOB chunks under D1's 2 MB cap, keyed by data
+  version), rebuilding and storing both only on a miss. The ingest's `final`
+  marker warms it so the first visit after a sync is instant; the CLI allows
+  that one POST ten minutes. The usage route still layers the per-colo Cache
+  API on top, keyed by data version. Inactive staged uploads expire after
+  seven days. Aggregate-only rows
   are retained as a conservative floor because they lack file provenance.
   Never globally sweep history based on the files available in one scan.
 - **Refresh from the site = a flag, long-poll, backup, incremental import.**

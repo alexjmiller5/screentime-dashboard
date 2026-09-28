@@ -171,6 +171,56 @@ export function ingestStatements(chunk: IngestChunk, now: string): Statement[] {
 	return stmts;
 }
 
+export type DerivedName = 'summary' | 'sessions';
+export const DERIVED_CHUNK_BYTES = 1_000_000;
+
+/** The /api/usage document bytes for the current data version. Served from
+ * the `derived` table; a miss (new version, first deploy) rebuilds history
+ * once and stores both documents. */
+export async function readDerived(
+	db: D1Database,
+	name: DerivedName,
+	chunkBytes = DERIVED_CHUNK_BYTES
+): Promise<Uint8Array<ArrayBuffer> | null> {
+	const meta = await readMeta(db);
+	const version = meta.data_updated_at ?? meta.imported_at;
+	if (!version) return null;
+	const stored = await db
+		.prepare('SELECT body FROM derived WHERE name = ? AND version = ? ORDER BY chunk')
+		.bind(name, version)
+		.all<{ body: ArrayBuffer | Uint8Array }>();
+	if (stored.results.length) {
+		const parts = stored.results.map((r) => new Uint8Array(r.body));
+		const out = new Uint8Array(parts.reduce((n, p) => n + p.byteLength, 0));
+		let offset = 0;
+		for (const p of parts) {
+			out.set(p, offset);
+			offset += p.byteLength;
+		}
+		return out;
+	}
+	const data = await readUsageCache(db);
+	if (!data) return null;
+	const docs: Record<DerivedName, Uint8Array<ArrayBuffer>> = {
+		summary: new TextEncoder().encode(JSON.stringify({ ...data, sessions: undefined })),
+		sessions: new TextEncoder().encode(
+			JSON.stringify({ sessions: data.sessions ?? [], importedAt: data.importedAt })
+		)
+	};
+	const stmts: D1PreparedStatement[] = [];
+	for (const [docName, bytes] of Object.entries(docs)) {
+		stmts.push(db.prepare('DELETE FROM derived WHERE name = ?').bind(docName));
+		for (let i = 0; i * chunkBytes < bytes.byteLength || (i === 0 && !bytes.byteLength); i++)
+			stmts.push(
+				db
+					.prepare('INSERT INTO derived (name, version, chunk, body) VALUES (?, ?, ?, ?)')
+					.bind(docName, version, i, bytes.slice(i * chunkBytes, (i + 1) * chunkBytes))
+			);
+	}
+	await db.batch(stmts);
+	return docs[name];
+}
+
 export async function readUsageCache(db: D1Database): Promise<UsageCache | null> {
 	const meta = await readMeta(db);
 	if (!meta.imported_at && !meta.data_updated_at) return null;

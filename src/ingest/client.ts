@@ -44,8 +44,8 @@ export class DashboardClient {
 		private readonly fetchFn: typeof fetch = fetch
 	) {}
 
-	async post(chunk: IngestChunk): Promise<void> {
-		const res = await this.send('/api/ingest', chunk);
+	async post(chunk: IngestChunk, timeoutMs?: number): Promise<void> {
+		const res = await this.send('/api/ingest', chunk, timeoutMs);
 		if (!res.ok) throw new Error(`ingest ${res.status}: ${(await res.text()).slice(0, 200)}`);
 	}
 
@@ -62,14 +62,14 @@ export class DashboardClient {
 		return res.json() as Promise<RefreshStatus>;
 	}
 
-	private async send(path: string, body?: unknown): Promise<Response> {
+	private async send(path: string, body?: unknown, timeoutMs = 15_000): Promise<Response> {
 		return authenticatedFetch(
 			this.baseUrl,
 			this.credential,
 			this.fetchFn
 		)(new URL(path, this.baseUrl), {
 			method: body === undefined ? 'GET' : 'POST',
-			signal: AbortSignal.timeout(15_000),
+			signal: AbortSignal.timeout(timeoutMs),
 			redirect: 'error',
 			headers: {
 				'content-type': 'application/json'

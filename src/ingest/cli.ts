@@ -152,7 +152,9 @@ async function sync(force = false, context?: JobContext): Promise<void> {
 			throw new Error(
 				`${result.failed} files unavailable; imported files and previous history are preserved. ${result.errors[0] ?? ''}`
 			);
-		await client.post({ runId, final: true });
+		// The final marker materializes the dashboard documents server-side (a
+		// full-history rebuild): allow it minutes, not the usual 15 seconds.
+		await client.post({ runId, final: true }, 10 * 60_000);
 		if (context && !(await client.job({ ...context, stage: 'complete', detail })))
 			throw new Error('The refresh was superseded before completion');
 		log('sync done');

@@ -4,7 +4,7 @@
 // unique events no longer fit the Worker memory budget.
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from '@sveltejs/kit';
-import { readMeta, readUsageCache } from '$lib/server/store';
+import { readDerived, readMeta } from '$lib/server/store';
 import type { FocusSession } from '$lib/data/cache';
 
 export const GET: RequestHandler = async ({ platform, url }) => {
@@ -30,14 +30,11 @@ export const GET: RequestHandler = async ({ platform, url }) => {
 	const key = new Request(keyUrl);
 	let response = version ? await cache?.match(key).catch(() => undefined) : undefined;
 	if (!response) {
-		const data = await readUsageCache(platform!.env.DB);
-		if (!data) return new Response(null, { status: 404 });
-		response = json(
-			timing
-				? { sessions: data.sessions ?? [], importedAt: data.importedAt }
-				: { ...data, sessions: undefined },
-			{ headers: { 'cache-control': 'public, max-age=86400' } }
-		);
+		const body = await readDerived(platform!.env.DB, timing ? 'sessions' : 'summary');
+		if (!body) return new Response(null, { status: 404 });
+		response = new Response(body, {
+			headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=86400' }
+		});
 		if (version) await cache?.put(key, response.clone()).catch(() => {});
 	}
 	if (timing) {

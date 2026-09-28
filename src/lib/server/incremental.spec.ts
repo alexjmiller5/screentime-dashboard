@@ -3,6 +3,7 @@ import initSqlJs, { type Database, type SqlValue } from 'sql.js';
 import { beforeEach, afterEach, expect, it } from 'vitest';
 import { GET, POST } from '../../routes/api/imports/+server';
 import { readImportedScan } from './incremental';
+import { readDerived } from './store';
 import { buildUsageCache } from '../data/cache';
 import type { ImportResult } from '../import/importer';
 
@@ -13,7 +14,7 @@ beforeEach(async () => {
 	const SQL = await initSqlJs();
 	sqlite = new SQL.Database();
 	sqlite.run('PRAGMA foreign_keys = ON');
-	for (const name of ['0001_init.sql', '0002_incremental_imports.sql'])
+	for (const name of ['0001_init.sql', '0002_incremental_imports.sql', '0005_derived.sql'])
 		sqlite.run(readFileSync(`migrations/${name}`, 'utf8'));
 	const prepare = (sql: string, params: SqlValue[] = []): unknown => ({
 		bind: (...values: SqlValue[]) => prepare(sql, values),
@@ -458,4 +459,24 @@ it('bounds cleanup work per begin rather than sweeping the whole expired backlog
 	expect(
 		sqlite.exec("SELECT COUNT(*) FROM import_uploads WHERE id LIKE 'expired-%'")[0].values[0][0]
 	).toBe(5);
+});
+
+it('serves derived documents from the store until the data version changes', async () => {
+	expect(await readDerived(db, 'summary')).toBeNull();
+	await upload();
+	const decode = (bytes: Uint8Array | null) =>
+		JSON.parse(new TextDecoder().decode(bytes!)) as {
+			rows: { seconds: number }[];
+			sessions?: unknown;
+		};
+	const first = decode(await readDerived(db, 'summary', 64));
+	expect(first.rows.some((r) => r.seconds === 60)).toBe(true);
+	expect(first.sessions).toBeUndefined();
+	expect(sqlite.exec('SELECT COUNT(*) FROM derived')[0].values[0][0]).toBeGreaterThan(2);
+	expect(decode(await readDerived(db, 'sessions')).sessions).toBeInstanceOf(Array);
+	// Raw records vanish without a version bump: the stored document still serves.
+	sqlite.run('DELETE FROM import_records');
+	expect(decode(await readDerived(db, 'summary', 64))).toEqual(first);
+	sqlite.run("UPDATE meta SET value = 'v2' WHERE key = 'data_updated_at'");
+	expect(decode(await readDerived(db, 'summary', 64)).rows).toEqual([]);
 });

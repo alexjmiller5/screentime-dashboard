@@ -3,9 +3,9 @@ import { GET } from './+server';
 const state = vi.hoisted(() => ({ version: 'first', reads: 0 }));
 vi.mock('$lib/server/store', () => ({
 	readMeta: async () => ({ data_updated_at: state.version }),
-	readUsageCache: async () => {
+	readDerived: async (_db: unknown, name: 'summary' | 'sessions') => {
 		state.reads++;
-		return {
+		const data = {
 			importedAt: state.version,
 			rows: [],
 			sessions: [
@@ -23,6 +23,13 @@ vi.mock('$lib/server/store', () => ({
 				}
 			]
 		};
+		return new TextEncoder().encode(
+			JSON.stringify(
+				name === 'sessions'
+					? { sessions: data.sessions, importedAt: data.importedAt }
+					: { ...data, sessions: undefined }
+			)
+		);
 	}
 }));
 afterEach(() => vi.unstubAllGlobals());
