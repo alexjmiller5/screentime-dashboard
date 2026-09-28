@@ -3,7 +3,7 @@
 // Access with a service token, so no app-level auth.
 
 import type { RequestHandler } from '@sveltejs/kit';
-import { ingestStatements, runStatements, type IngestChunk } from '$lib/server/store';
+import { ingestStatements, readDerived, runStatements, type IngestChunk } from '$lib/server/store';
 
 const MAX_BYTES = 8 * 1024 * 1024;
 
@@ -23,5 +23,7 @@ export const POST: RequestHandler = async ({ platform, request }) => {
 		return new Response('runId required', { status: 400 });
 	}
 	await runStatements(platform!.env.DB, ingestStatements(chunk, new Date().toISOString()));
+	// Materialize the dashboard documents now so the first visit after a sync is instant.
+	if (chunk.final) await readDerived(platform!.env.DB, 'summary');
 	return new Response(null, { status: 204 });
 };
