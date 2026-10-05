@@ -197,10 +197,12 @@ adapter and compiler options live in `vite.config.ts` inside the
 
 - **Components: shadcn-svelte** in `src/lib/components/ui/` - that code is
   OURS: edit freely. Add more with `bunx shadcn-svelte@latest add <component>`.
-- **Theme: the cf-site template default palette** (stock oklch light+dark
-  shadcn tokens in `src/routes/layout.css`) - deliberately kept, this project
-  is a test of the template's defaults. ALL tokens live in the `@theme` /
-  `:root` / `.dark` blocks there; components consume tokens, never raw values.
+- **Theme: always dark with a true black page background.** `src/app.html`
+  applies `.dark` before the first render, independent of system appearance.
+  Browser and PWA colors match the black background; cards, menus and charts
+  use the dark shadcn palette. ALL tokens live in the `@theme` / `:root` /
+  `.dark` blocks in `src/routes/layout.css`; components consume tokens,
+  never raw values.
 - Icons: Tabler ONLY via `@tabler/icons-svelte` for UI chrome - never emojis.
   shadcn's internal Lucide usage stays. DATA icons (app/site identity) are a
   separate system: `src/lib/viz/icons.svelte.ts` resolves a display key to
