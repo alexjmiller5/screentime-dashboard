@@ -263,3 +263,22 @@ watch the run: `gh run watch <id> --exit-status`.
 
 Test first (`*.spec.ts` next to the code). All of `src/lib/data/` is pure and
 unit-tested; parser correctness is anchored by the ccl-segb fixture.
+
+## Offline startup
+
+- The production service worker caches the home document and bundled assets per
+  build. Updates activate after existing clients close; activation prunes only old
+  shell caches. Never intercept API mutations or Cloudflare Access routes.
+- `readDashboard` stores successful JSON GETs in device-local CacheStorage. Offline
+  reads use the saved snapshot immediately; weak connections get 750 ms before
+  fallback, with an 8-second request bound. Explicit refreshes require fresh data.
+  Saved snapshots show their save time. Errors, redirects, and login HTML cannot
+  replace a successful snapshot. Clearing website data removes offline data.
+- Reconnect uses a full `/?online=1` navigation, bypassing the cached document so
+  Cloudflare Access can authenticate. The flag is removed after startup. An online
+  visit must finish loading once before offline reopening is possible.
+- Run the offline helper and service-worker regression tests with the normal test
+  suite; verify the production build with browser networking disabled, not Vite dev
+  (SvelteKit only registers the service worker in production).
+- Session reads include the summary data version in their cache key and carry
+  the view effect’s abort signal; never label older sessions as a newer summary.
