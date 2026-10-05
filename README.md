@@ -147,3 +147,12 @@ Marker content lives in D1, never in source control.
   `scripts/generate-icons.sh` (homescreen icons). Deploy the authenticated device
   API and migration before adding the device path bypass. `/connect` and all
   other dashboard routes must remain Access-protected, including preview hosts.
+
+## Offline use
+
+Open the dashboard online once and let it finish loading. Later launches can use
+its downloaded application and last successful data on that device. Saved data is
+labelled with its save time. Reconnect loads through Cloudflare Access when your
+connection returns or your sign-in needs renewing. Refresh waits for a fresh
+response and keeps the previous chart if the request fails. Clearing the site's
+browser data removes the offline copy; a first visit still needs internet access.

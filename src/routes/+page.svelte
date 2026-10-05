@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
+	import { readDashboard } from '$lib/offline';
 	import { refreshMessage } from '$lib/viz/refresh-status';
 	import { replaceState } from '$app/navigation';
 	import { syncBackups, type SyncResult } from '$lib/import/incremental';
@@ -68,16 +69,16 @@
 
 	let cache = $state<UsageCache | null>(null);
 	let loading = $state(true);
+	let savedAt = $state<string | null>(null);
 	let refresh = $state<RefreshStatus | null>(null);
 	let refreshError = $state('');
 	let devicesOpen = $state(false);
 	let markersOpen = $state(false);
 	let markers = $state<Marker[]>([]);
 	let markersError = $state('');
-	async function loadMarkers(): Promise<void> {
-		const response = await fetch('/api/markers');
-		if (!response.ok) throw new Error('Could not load markers');
-		markers = ((await response.json()) as { markers: Marker[] }).markers;
+	async function loadMarkers(refresh = false): Promise<void> {
+		const result = await readDashboard<{ markers: Marker[] }>('/api/markers', fetch, { refresh });
+		markers = result.data.markers;
 	}
 	async function saveMarker(marker: MarkerInput, id?: string): Promise<void> {
 		const response = await fetch('/api/markers', {
@@ -86,12 +87,12 @@
 			body: JSON.stringify({ ...marker, id })
 		});
 		if (!response.ok) throw new Error('Could not save marker');
-		await loadMarkers();
+		await loadMarkers(true);
 	}
 	async function deleteMarker(id: string): Promise<void> {
 		const response = await fetch('/api/markers?id=' + encodeURIComponent(id), { method: 'DELETE' });
 		if (!response.ok) throw new Error('Could not delete marker');
-		await loadMarkers();
+		await loadMarkers(true);
 	}
 	let folderInput: HTMLInputElement;
 	let localBusy = $state(false);
@@ -121,7 +122,7 @@
 		} finally {
 			// A failed or cancelled run may still have committed earlier files.
 			try {
-				await loadUsage();
+				await loadUsage(true);
 			} catch (error) {
 				if (localResult)
 					localResult.errors = [...localResult.errors, `Could not reload usage: ${String(error)}`];
@@ -169,14 +170,12 @@
 		if (!needsSessions || !cache || !dateStart || !dateEnd || sessionData?.key === key) return;
 		const controller = new AbortController();
 		sessionError = '';
-		fetch(`/api/usage?${new URLSearchParams({ sessions: '1', start: dateStart, end: dateEnd })}`, {
-			signal: controller.signal
-		})
-			.then(async (response) => {
-				if (!response.ok) throw Error(`Session request failed (${response.status})`);
-				return response.json() as Promise<{ sessions: FocusSession[] }>;
-			})
-			.then((data) => {
+		readDashboard<{ sessions: FocusSession[] }>(
+			`/api/usage?${new URLSearchParams({ sessions: '1', start: dateStart, end: dateEnd, version: cache.importedAt })}`,
+			fetch,
+			{ signal: controller.signal }
+		)
+			.then(({ data }) => {
 				if (!controller.signal.aborted) sessionData = { key, sessions: data.sessions };
 			})
 			.catch((error) => {
@@ -249,21 +248,26 @@
 		}
 		// A refresh in flight from before a reload keeps being watched.
 		try {
-			await loadRefresh();
+			if (navigator.onLine) await loadRefresh();
 		} catch (error) {
 			refreshError = String(error);
 		}
-		watchRefresh();
+		if (navigator.onLine) watchRefresh();
 	});
 
-	async function loadUsage(): Promise<void> {
-		const res = await fetch('/api/usage');
-		if (res.status === 404) {
-			cache = null;
-			return;
+	async function loadUsage(refresh = false): Promise<void> {
+		try {
+			const result = await readDashboard<UsageCache>('/api/usage', fetch, { refresh });
+			cache = result.data;
+			savedAt = result.savedAt;
+		} catch (error) {
+			if (error instanceof Error && error.cause === 404) {
+				cache = null;
+				savedAt = null;
+				return;
+			}
+			throw error;
 		}
-		if (!res.ok) throw new Error(`Usage request failed (${res.status})`);
-		cache = (await res.json()) as UsageCache;
 	}
 	async function loadRefresh(): Promise<void> {
 		const res = await fetch('/api/refresh');
@@ -339,7 +343,7 @@
 					previous.phase !== refresh?.phase ||
 					previous.importedAt !== refresh?.importedAt
 				)
-					await loadUsage();
+					await loadUsage(true);
 			} catch (error) {
 				refreshError = [refreshError, `Could not reload usage: ${String(error)}`]
 					.filter(Boolean)
@@ -372,14 +376,14 @@
 			if (document.hidden || disposed || resuming) return;
 			resuming = true;
 			try {
-				await loadRefresh();
-				await loadUsage();
+				await loadUsage(true);
+				if (navigator.onLine) await loadRefresh();
 			} catch (error) {
 				refreshError = `Could not reload dashboard: ${String(error)}`;
 			} finally {
 				resuming = false;
 			}
-			if (!disposed) {
+			if (!disposed && navigator.onLine) {
 				watchRefresh(true);
 			}
 		};
@@ -706,11 +710,15 @@
 		</div>
 	</header>
 
-	{#if refreshError}
+	{#if savedAt}<p class="text-xs text-muted-foreground" role="status">
+			Showing saved data from {new Date(savedAt).toLocaleString()}.
+			<a href="/?online=1" data-sveltekit-reload class="underline">Reconnect</a>
+		</p>{/if}
+	{#if refreshError && cache}
 		<p class="text-sm text-destructive">{refreshError}</p>
 	{/if}
 
-	{#if markersError}<p class="text-sm text-destructive">{markersError}</p>{/if}
+	{#if markersError && cache}<p class="text-sm text-destructive">{markersError}</p>{/if}
 	{#if localProgress || localResult}
 		<div class="min-w-0 rounded-lg border bg-card p-4 text-sm" role="status" aria-live="polite">
 			{#if localBusy}
@@ -739,11 +747,18 @@
 	{:else if !cache}
 		<div class="flex flex-col items-center gap-3 rounded-lg border bg-card px-6 py-20 text-center">
 			<IconChartBar size={40} class="text-muted-foreground" />
-			<h2 class="text-lg font-medium">No data yet</h2>
+			<h2 class="text-lg font-medium">
+				{refreshError ? 'Unable to load Screen Time' : 'No data yet'}
+			</h2>
 			<p class="max-w-md text-sm text-muted-foreground">
-				Hit <strong>Refresh</strong>: the mac mini takes a fresh Screen Time dump and imports new or
-				changed backup files. Or choose
-				<strong>Import local</strong> to read a backup folder on this device.
+				{#if refreshError}
+					Check your connection and reopen the dashboard to load your data.
+					<a href="/?online=1" data-sveltekit-reload class="underline">Reconnect</a>
+				{:else}
+					Hit <strong>Refresh</strong>: the mac mini takes a fresh Screen Time dump and imports new
+					or changed backup files. Or choose
+					<strong>Import local</strong> to read a backup folder on this device.
+				{/if}
 			</p>
 		</div>
 	{:else}

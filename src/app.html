@@ -2,6 +2,7 @@
 <html lang="en" class="dark">
 	<head>
 		<meta charset="utf-8" />
+		<meta name="dashboard-shell" content="1" />
 		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 		<meta name="text-scale" content="scale" />
 		<!-- use-credentials: manifest fetches are cookie-less by default and Cloudflare
@@ -17,6 +18,13 @@
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">
+		<div
+			id="dashboard-loading"
+			role="status"
+			style="padding: 3rem 1rem; text-align: center; font: 14px system-ui"
+		>
+			Loading Screen Time...<br />If this takes a moment, check your connection.
+		</div>
 		<div style="display: contents">%sveltekit.body%</div>
 	</body>
 </html>
