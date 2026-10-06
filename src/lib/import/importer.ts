@@ -31,6 +31,10 @@ export interface FileLike {
 	kind: 'file';
 	name: string;
 	getFile(): Promise<{ arrayBuffer(): Promise<ArrayBuffer> }>;
+	/** Native adapters may reuse a hash only after verifying a reliable file change identity. */
+	getCachedHash?(): Promise<string | undefined>;
+	/** Remember a computed hash only for bytes proven stable by the adapter. */
+	rememberHash?(hash: string): void;
 }
 export interface DirLike {
 	kind?: 'directory';

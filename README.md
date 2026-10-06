@@ -24,6 +24,16 @@ against D1's import ledger (path, SHA-256, parser version). Only missing or
 changed files are parsed and uploaded. An old snapshot is eligible even if
 newer usage is already present.
 
+The native CLI remembers hashes locally. Once a file has been imported, a
+refresh checks its filesystem identity and change timestamps without reading
+or hashing its archive again. Same-size edits and replacements are rechecked.
+Directories are still listed and files inspected to discover old corrections
+and newly available snapshots. The first run, Rebuild, parser upgrades, browser
+imports, and files without precise change metadata still read and hash archives.
+The disposable `file-hashes.json` cache lives in `SCREENTIME_STATE_DIR`
+(default `~/Library/Application Support/screentime-ingest`); removing it causes
+one fresh hash pass and does not remove imported history.
+
 - **Refresh** takes a fresh backup on the configured Mac, then imports all
   missing or changed files, including older files newly available from iCloud.
 - **Import from this Mac** opens a folder picker. Select the backups folder;

@@ -9,9 +9,19 @@ snapshots. Private site - Alex only, via Cloudflare Access.
 
 - **Incremental imports run on the Mac or in the browser.**
   `src/lib/import/incremental.ts` is shared by the Bun CLI and local folder
-  picker. Every supported file in every dated snapshot is hashed and checked
-  against D1's ledger by path, content hash and parser version. Only missing
-  or changed files are parsed/uploaded; Rebuild forces available files.
+  picker. Every supported file in every dated snapshot is checked against D1's
+  ledger by path, content hash and parser version. Only missing or changed
+  files are parsed/uploaded; Rebuild forces available files.
+  The native CLI saves content hashes in `file-hashes.json` under
+  `SCREENTIME_STATE_DIR` (default `~/Library/Application Support/screentime-ingest`).
+  An unchanged device/inode/size/mtime/ctime fingerprint can reuse a hash only
+  when the server ledger also matches the current parser. Identity checks use
+  bigint nanosecond timestamps; missing or coarse change timestamps fall back
+  to reading/hashing. Fingerprints must match before and after a read before
+  it can be memoized. Browser imports, cold caches, parser changes and force
+  rebuilds read/hash files. Every refresh still enumerates directories and
+  stats supported files to discover additions and corrections. The atomic local
+  cache is disposable; deleting or corrupting it only costs a fresh hash pass.
 - **Files commit atomically.** `/api/imports` stages bounded parsed chunks,
   checks completeness, then switches the file's active contribution. Failed
   reads/uploads retain the prior contribution. Overlapping focus events and
