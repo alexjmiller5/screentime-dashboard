@@ -32,6 +32,7 @@
 	import { readSavedApps, isSavedAppsActive } from '$lib/viz/saved-apps';
 	import { iconUrl } from '$lib/viz/icons.svelte';
 	import RangeSlider from '$lib/components/RangeSlider.svelte';
+	import { readDateSelection } from '$lib/viz/date-viewport';
 	import { PRESET_LABELS, getPresetRange, type PresetLabel } from '$lib/viz/presets';
 	import Seo from '$lib/components/seo.svelte';
 	import { Button } from '$lib/components/ui/button';
@@ -210,12 +211,10 @@
 			measuredBy =
 				p.measuredBy && p.measuredBy in SOURCE_LABELS ? (p.measuredBy as UsageRow['source']) : '';
 			excludedDevices = readSavedApps(p.excludedDevices, []);
-			activePreset =
-				p.preset === '' || PRESET_LABELS.includes(p.preset as PresetLabel) ? p.preset! : '90D';
-			if (p.preset === '' && p.dateStart && p.dateEnd) {
-				dateStart = p.dateStart;
-				dateEnd = p.dateEnd;
-			}
+			const dates = readDateSelection(p);
+			activePreset = dates.preset;
+			dateStart = dates.dateStart;
+			dateEnd = dates.dateEnd;
 		} catch {
 			/* first run */
 		}
@@ -489,8 +488,16 @@
 
 	// A restored Custom range can fall outside fresh data bounds (the backup
 	// window slides weekly) - clamp what the slider displays.
-	const sliderStart = $derived(!dateStart || dateStart < bounds.min ? bounds.min : dateStart);
-	const sliderEnd = $derived(!dateEnd || dateEnd > bounds.max ? bounds.max : dateEnd);
+	const sliderStart = $derived(
+		!dateStart || dateStart < bounds.min
+			? bounds.min
+			: dateStart > bounds.max
+				? bounds.max
+				: dateStart
+	);
+	const sliderEnd = $derived(
+		!dateEnd || dateEnd > bounds.max ? bounds.max : dateEnd < bounds.min ? bounds.min : dateEnd
+	);
 
 	const totalRows = $derived(
 		filterRows(sourceRows, {
