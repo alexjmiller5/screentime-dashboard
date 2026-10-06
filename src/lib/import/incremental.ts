@@ -146,11 +146,18 @@ export async function syncBackups(dir: DirLike, options: SyncOptions): Promise<S
 				options.onProgress?.(`Checking ${path}`);
 				try {
 					checkCancelled();
+					const cachedHash = !options.force ? await file.getCachedHash?.() : undefined;
+					checkCancelled();
+					if (cachedHash && known.has(JSON.stringify([path, cachedHash, PARSER_VERSION]))) {
+						result.skipped++;
+						continue;
+					}
 					const bytes = await (await file.getFile()).arrayBuffer();
 					const hash = Array.from(
 						new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)),
 						(b) => b.toString(16).padStart(2, '0')
 					).join('');
+					file.rememberHash?.(hash);
 					checkCancelled();
 					if (!options.force && known.has(JSON.stringify([path, hash, PARSER_VERSION]))) {
 						result.skipped++;
