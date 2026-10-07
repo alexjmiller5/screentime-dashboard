@@ -14,7 +14,7 @@ it('keeps requests on the configured service and prefix, without forwarding redi
 	await archive.read('raw/example/file');
 	expect(fetch.mock.calls[0][0]).toBe('https://hub.example/v1/files/raw/example/file');
 	expect(fetch.mock.calls[0][1]).toMatchObject({
-		redirect: 'error',
+		redirect: 'manual',
 		headers: { Authorization: 'Bearer secret', 'User-Agent': 'screentime-dashboard/1.0' }
 	});
 });
@@ -53,4 +53,15 @@ it('forbids credentials and non-origin paths in service URLs', () => {
 		'https://hub.example/?x=1'
 	])
 		expect(() => new LifeArchive(url, 'secret', 'raw/example/', vi.fn())).toThrow();
+});
+
+it('rejects redirect responses without following them or exposing the credential to another host', async () => {
+	const transport = vi
+		.fn()
+		.mockResolvedValue(
+			new Response(null, { status: 302, headers: { Location: 'https://foreign.example/file' } })
+		);
+	const archive = new LifeArchive('https://hub.example', 'secret', 'raw/example/', transport);
+	await expect(archive.read('raw/example/file')).rejects.toThrow('302');
+	expect(transport).toHaveBeenCalledTimes(1);
 });
