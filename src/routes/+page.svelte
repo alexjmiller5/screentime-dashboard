@@ -684,7 +684,7 @@
 						size="sm"
 						onclick={() => requestRefresh('rebuild')}
 						disabled={refresh?.phase === 'running' || localBusy}
-						title="Re-parse the snapshots already on disk (no new Screen Time dump)"
+						title="Reprocess retained snapshots without taking a new Screen Time dump"
 					>
 						<IconRotate size={16} />
 						Rebuild
