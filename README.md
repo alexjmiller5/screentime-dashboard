@@ -27,19 +27,23 @@ newer usage is already present.
 The native CLI remembers hashes locally. Once a file has been imported, a
 refresh checks its filesystem identity and change timestamps without reading
 or hashing its archive again. Same-size edits and replacements are rechecked.
-Directories are still listed and files inspected to discover old corrections
-and newly available snapshots. The first run, Rebuild, parser upgrades, browser
-imports, and files without precise change metadata still read and hash archives.
+With Life Data retention enabled, refresh lists snapshot directory names but
+opens only the newest local snapshot and previously unseen dates. Historical
+files come from the retained manifest, without inspecting old local files.
+Use `screentime-ingest sync --scan-local` or the folder importer to check
+corrections or incomplete files in older local snapshots. Rebuild uses retained
+originals, so deleted local backups do not remove rebuildable history.
 The disposable `file-hashes.json` cache lives in `SCREENTIME_STATE_DIR`
 (default `~/Library/Application Support/screentime-ingest`); removing it causes
 one fresh hash pass and does not remove imported history.
 
 - **Refresh** takes a fresh backup on the configured Mac, then imports all
-  missing or changed files, including older files newly available from iCloud.
+  new snapshot files. Archived history remains available without local copies.
 - **Import from this Mac** opens a folder picker. Select the backups folder;
   parsing happens in the browser, using the same ledger and upload protocol.
-- **Rebuild** skips the new backup and reprocesses available files, useful
-  after parser changes. Unavailable files keep their previously imported data.
+- **Rebuild** skips the new backup and reprocesses retained originals from
+  Life Data. Without archive configuration it uses local files. Unavailable
+  files keep their previously imported data.
 
 Uploads are staged per file and committed only when every chunk is present.
 D1 retains each file's parsed events and segments, so overlapping snapshots
@@ -149,8 +153,14 @@ Marker content lives in D1, never in source control.
 
 ## Notes
 
-- No runtime secrets (`.env.tpl` is intentionally empty); CI deploy creds
-  resolve from 1Password in the workflow.
+- Original snapshots are retained through Life Data's supported file API.
+  Configure `LIFE_HUB_URL`, a dedicated `LIFE_HUB_TOKEN` with file read/write
+  scopes restricted to `LIFE_ARCHIVE_PREFIX`, and that prefix in the project ENV
+  item referenced by `.env.tpl`. CI delivers these as Worker secrets; neither
+  the browser nor installed uploader receives the Life Data credential. The
+  dashboard keeps its own D1 derived data and manifest reference. Archive
+  failures stop imports instead of silently losing originals. Before removing
+  old backups, verify every original and a complete archive-backed rebuild.
 - Provisioning is scripted: `scripts/cf-d1.py` (database), `scripts/cf-access.py
 --domain '<worker>.<account>.workers.dev' --domain '*-<worker>.<account>.workers.dev'
 --pwa --public-path /api/refresh/pending --public-path '/api/device/*'` (Access),
