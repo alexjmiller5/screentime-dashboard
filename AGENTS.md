@@ -18,7 +18,9 @@ snapshots. Private site - Alex only, via Cloudflare Access.
   when the server ledger also matches the current parser. Identity checks use
   bigint nanosecond timestamps; missing or coarse change timestamps fall back
   to reading/hashing. Fingerprints must match before and after a read before
-  it can be memoized. Browser imports, cold caches, parser changes and force
+  it can be memoized. A changing identity retries at most three reads within
+  the original read deadline. Only a stable attempt seeds the hash memo;
+  coarse metadata stays uncached. Browser imports, cold caches, parser changes and force
   rebuilds read/hash files. With the source archive enabled, ordinary refresh lists snapshot directory names
   but opens only the newest local snapshot day and dates absent from the archive.
   Retained history comes from the archive manifest; `sync --scan-local` explicitly

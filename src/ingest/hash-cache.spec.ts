@@ -132,15 +132,15 @@ it('insufficient or coarse metadata never authorizes a cached hash', () => {
 	expect(fileFingerprint({ ...metadata, ino: 0n })).toBeUndefined();
 	expect(fileFingerprint({ ...metadata, ctimeNs: undefined })).toBeUndefined();
 });
-it('a file modified during a read is neither memoized nor uploaded', async () => {
+it('a file that keeps changing is neither memoized nor uploaded', async () => {
 	const f = await fixture();
 	const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
-	let changed = false;
+	let changes = 0;
 	vi.mocked(fs.readFile).mockImplementation((async (...args: Parameters<typeof fs.readFile>) => {
 		const bytes = await actual.readFile(...args);
-		if (args[0] === f.archive && !changed) {
-			changed = true;
-			await fs.writeFile(f.archive, gzipSync('other'));
+		if (args[0] === f.archive) {
+			changes++;
+			await fs.writeFile(f.archive, gzipSync('other-' + changes));
 		}
 		return bytes;
 	}) as typeof fs.readFile);
@@ -151,6 +151,7 @@ it('a file modified during a read is neither memoized nor uploaded', async () =>
 		errors: [expect.stringContaining('changed while being read')]
 	});
 	expect(f.uploads).toEqual([]);
+	expect(changes).toBeLessThanOrEqual(3);
 	expect((await loadHashCache(f.cachePath)).size).toBe(0);
 });
 it('a malformed memo entry cannot skip a read even with a valid cache envelope', async () => {
@@ -181,4 +182,23 @@ it('failed uploads cannot become skips through the local memo', async () => {
 	expect(failed).toMatchObject({ imported: 0, failed: 1 });
 	await saveHashCache(f.cachePath, cache);
 	expect(await f.run()).toMatchObject({ imported: 1, skipped: 0, failed: 0 });
+});
+
+it('retries a materializing or replaced file and uploads only the final stable bytes', async () => {
+	const f = await fixture();
+	const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+	let reads = 0;
+	const replacement = gzipSync('replacement');
+	vi.mocked(fs.readFile).mockImplementation((async (...args: Parameters<typeof fs.readFile>) => {
+		const bytes = await actual.readFile(...args);
+		if (args[0] === f.archive && ++reads === 1) await actual.writeFile(f.archive, replacement);
+		return bytes;
+	}) as typeof fs.readFile);
+	expect(await f.run()).toMatchObject({ imported: 1, failed: 0 });
+	expect(reads).toBe(2);
+	const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', replacement)), (b) =>
+		b.toString(16).padStart(2, '0')
+	).join('');
+	expect(f.uploads[0].hash).toBe(hash);
+	expect((await loadHashCache(f.cachePath)).get(f.archive)?.hash).toBe(hash);
 });
