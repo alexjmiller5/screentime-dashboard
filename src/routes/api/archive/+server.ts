@@ -47,7 +47,11 @@ export const GET: RequestHandler = async ({ platform, fetch, url }) => {
 			},
 			{ headers }
 		);
-	} catch {
+	} catch (cause) {
+		console.error(
+			'Retained source read failed:',
+			cause instanceof Error ? cause.message : 'unknown error'
+		);
 		throw error(502, 'Retained sources could not be read. Previous dashboard data is preserved.');
 	}
 };
