@@ -54,23 +54,29 @@ export function fsDir(
 						},
 						getFile: async () => {
 							readFingerprint = undefined;
-							const before = hashCache
-								? fileFingerprint(await stat(full, { bigint: true }))
-								: undefined;
-							const bytes = await readWithTimeout(full, readTimeoutMs);
-							if (before) {
-								const after = fileFingerprint(await stat(full, { bigint: true }));
-								if (before !== after)
-									throw new Error('Backup file changed while being read; retry refresh');
-								readFingerprint = after;
+							const deadline = Date.now() + readTimeoutMs;
+							for (let attempt = 0; attempt < 3; attempt++) {
+								const before = hashCache
+									? fileFingerprint(await stat(full, { bigint: true }))
+									: undefined;
+								const remaining = deadline - Date.now();
+								if (remaining <= 0)
+									throw new Error('Backup read timed out before a stable version was available');
+								const bytes = await readWithTimeout(full, remaining);
+								if (before) {
+									const after = fileFingerprint(await stat(full, { bigint: true }));
+									if (before !== after) continue;
+									readFingerprint = after;
+								}
+								return {
+									arrayBuffer: async () =>
+										bytes.buffer.slice(
+											bytes.byteOffset,
+											bytes.byteOffset + bytes.byteLength
+										) as ArrayBuffer
+								};
 							}
-							return {
-								arrayBuffer: async () =>
-									bytes.buffer.slice(
-										bytes.byteOffset,
-										bytes.byteOffset + bytes.byteLength
-									) as ArrayBuffer
-							};
+							throw new Error('Backup file changed while being read; retry refresh');
 						}
 					};
 				}
