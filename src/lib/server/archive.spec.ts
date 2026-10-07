@@ -15,7 +15,7 @@ it('keeps requests on the configured service and prefix, without forwarding redi
 	expect(fetch.mock.calls[0][0]).toBe('https://hub.example/v1/files/raw/example/file');
 	expect(fetch.mock.calls[0][1]).toMatchObject({
 		redirect: 'error',
-		headers: { Authorization: 'Bearer secret' }
+		headers: { Authorization: 'Bearer secret', 'User-Agent': 'screentime-dashboard/1.0' }
 	});
 });
 it('publishes originals only with conditional creation and server-verified checksum, resolving replay by readback', async () => {

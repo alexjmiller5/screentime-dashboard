@@ -71,7 +71,11 @@ export class LifeArchive {
 			`${this.base}/v1/files/${key.split('/').map(encodeURIComponent).join('/')}`,
 			{
 				...init,
-				headers: { ...init.headers, Authorization: `Bearer ${this.token}` },
+				headers: {
+					...init.headers,
+					Authorization: `Bearer ${this.token}`,
+					'User-Agent': 'screentime-dashboard/1.0'
+				},
 				redirect: 'error',
 				signal: AbortSignal.timeout(120_000)
 			}
