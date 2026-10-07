@@ -29,7 +29,9 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: op://Screentime Dashboard/Screentime Dashboard CI Cloudflare Token/account-id
       - run: bun install --frozen-lockfile
       - run: bun run test
+      - run: bun run check
+      - run: bun run lint
       - run: bun run build
       # Schema first: the Worker being deployed expects the migrated tables.
       - run: bunx wrangler d1 migrations apply screentime-dashboard --remote
-      - run: bunx wrangler deploy
+      - run: ./scripts/sync-secrets.sh

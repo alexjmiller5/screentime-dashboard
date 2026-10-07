@@ -17,6 +17,10 @@ const byteSize = (value: unknown): number => encoder.encode(JSON.stringify(value
 export type FetchFn = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 export interface SyncOptions extends ImportOptions {
+	archive?: {
+		has(path: string, hash: string): boolean;
+		retain(path: string, bytes: ArrayBuffer, hash: string): Promise<void>;
+	};
 	fetchFn?: FetchFn;
 	baseUrl?: string;
 	timeZone: string;
@@ -148,7 +152,11 @@ export async function syncBackups(dir: DirLike, options: SyncOptions): Promise<S
 					checkCancelled();
 					const cachedHash = !options.force ? await file.getCachedHash?.() : undefined;
 					checkCancelled();
-					if (cachedHash && known.has(JSON.stringify([path, cachedHash, PARSER_VERSION]))) {
+					if (
+						cachedHash &&
+						known.has(JSON.stringify([path, cachedHash, PARSER_VERSION])) &&
+						(!options.archive || options.archive.has(path, cachedHash))
+					) {
 						result.skipped++;
 						continue;
 					}
@@ -158,6 +166,10 @@ export async function syncBackups(dir: DirLike, options: SyncOptions): Promise<S
 						(b) => b.toString(16).padStart(2, '0')
 					).join('');
 					file.rememberHash?.(hash);
+					if (options.archive) {
+						options.onProgress?.(`Retaining ${path}`);
+						await options.archive.retain(path, bytes, hash);
+					}
 					checkCancelled();
 					if (!options.force && known.has(JSON.stringify([path, hash, PARSER_VERSION]))) {
 						result.skipped++;

@@ -3,6 +3,7 @@
 	import { readDashboard } from '$lib/offline';
 	import { refreshMessage } from '$lib/viz/refresh-status';
 	import { replaceState } from '$app/navigation';
+	import { ArchiveClient } from '$lib/import/archive-client';
 	import { syncBackups, type SyncResult } from '$lib/import/incremental';
 	import { filesToDir, querySqlite } from '$lib/import/browser';
 	import {
@@ -112,7 +113,9 @@
 		const controller = new AbortController();
 		localController = controller;
 		try {
+			const archive = await ArchiveClient.open('');
 			localResult = await syncBackups(filesToDir(files), {
+				archive: archive ?? undefined,
 				querySqlite,
 				timeZone: cache?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
 				signal: controller.signal,
