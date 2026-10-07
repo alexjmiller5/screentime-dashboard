@@ -28,7 +28,7 @@ The native CLI remembers hashes locally. Once a file has been imported, a
 refresh checks its filesystem identity and change timestamps without reading
 or hashing its archive again. Same-size edits and replacements are rechecked.
 With Life Data retention enabled, refresh lists snapshot directory names but
-opens only the newest local snapshot and previously unseen dates. Historical
+opens only the newest local snapshot day and previously unseen dates. Historical
 files come from the retained manifest, without inspecting old local files.
 Use `screentime-ingest sync --scan-local` or the folder importer to check
 corrections or incomplete files in older local snapshots. Rebuild uses retained
