@@ -2,29 +2,28 @@
 # requires-python = ">=3.12"
 # dependencies = ["httpx"]
 # ///
-"""Mint this project's machine-creatable credentials (op-project-bootstrap
-provision contract: --list prints mintable field names; --field NAME prints
-ONLY the secret to stdout, progress on stderr).
+"""Bootstrap minting: --list or --field NAME. Secret output is for the caller.
 
-Runs under whatever `op` auth the caller has; needs read access to the
-AI Agent vault (admin CF key with User API Tokens: Edit). Idempotent per field.
+The provisioning credential only mints replacements. Save the new value,
+deploy and verify before retiring the previous token by its provider ID.
 """
 
+import json
+import os
+import re
 import subprocess
 import sys
+from uuid import uuid4
 
 import httpx
 
-CF_ACCOUNT = "1e69de15e5dc3dddea6db7b3ae8087bc"
 NAME = "screentime-dashboard"
-# AI Agent vault Cloudflare API key, by ID (names are mutable, IDs aren't)
 OP_CF_TOKEN = "op://4eeyrkqibibn7k4j6rz2fbzvxm/mxxpo6neiz3grdyrjj7rv7nume/credential"
-
 FIELDS = ["api-token", "account-id"]
 
 
-def log(msg: str) -> None:
-    print(msg, file=sys.stderr)
+def log(message: str) -> None:
+    print(message, file=sys.stderr)
 
 
 def op_read(ref: str) -> str:
@@ -33,43 +32,113 @@ def op_read(ref: str) -> str:
     ).stdout.strip()
 
 
-def mint_deploy_token() -> str:
-    """Project-scoped CF token for CI: Workers Scripts + D1 only. Token values
-    are shown once, so delete any same-named token and recreate."""
-    c = httpx.Client(
+def client() -> httpx.Client:
+    return httpx.Client(
         base_url="https://api.cloudflare.com/client/v4",
-        headers={"Authorization": f"Bearer {op_read(OP_CF_TOKEN)}"},
-    )
-    token_name = f"{NAME}-deploy"
-    tokens = c.get("/user/tokens", params={"per_page": 100}).raise_for_status().json()["result"]
-    for t in tokens or []:
-        if t["name"] == token_name:
-            log(f"deleting existing token {token_name} (value not re-readable)")
-            c.delete(f"/user/tokens/{t['id']}").raise_for_status()
-    groups = c.get("/user/tokens/permission_groups").raise_for_status().json()["result"]
-    want = {"Workers Scripts Write", "D1 Write"}
-    ids = [{"id": g["id"]} for g in groups if g["name"] in want]
-    assert len(ids) == len(want), f"permission groups not found: {want}"
-    r = c.post(
-        "/user/tokens",
-        json={
-            "name": token_name,
-            "policies": [
-                {
-                    "effect": "allow",
-                    "resources": {f"com.cloudflare.api.account.{CF_ACCOUNT}": "*"},
-                    "permission_groups": ids,
-                }
-            ],
+        headers={
+            "Authorization": "Bearer "
+            + (os.environ.get("CF_PROVISION_TOKEN") or op_read(OP_CF_TOKEN))
         },
-    ).raise_for_status()
-    log(f"✓ scoped deploy token '{token_name}' minted (Workers Scripts + D1)")
-    return r.json()["result"]["value"]
+        timeout=30,
+    )
 
 
+def account_id(c: httpx.Client) -> str:
+    if value := os.environ.get("CLOUDFLARE_ACCOUNT_ID"):
+        return value
+    accounts = c.get("/accounts").raise_for_status().json()["result"]
+    if len(accounts) != 1:
+        raise RuntimeError("Set CLOUDFLARE_ACCOUNT_ID to select the deployment account")
+    return accounts[0]["id"]
+
+
+def mint_deploy_token() -> str:
+    """Dedicated credential; Workers Scripts Write is account-wide in Cloudflare."""
+    with client() as c:
+        groups = (
+            c.get("/user/tokens/permission_groups").raise_for_status().json()["result"]
+        )
+        ids = {g["name"]: g["id"] for g in groups}
+        policies = [
+            {
+                "effect": "allow",
+                "resources": {f"com.cloudflare.api.account.{account_id(c)}": "*"},
+                "permission_groups": [
+                    {"id": ids[name]} for name in ("Workers Scripts Write", "D1 Write")
+                ],
+            }
+        ]
+        result = (
+            c.post(
+                "/user/tokens",
+                json={
+                    "name": f"{NAME}-deploy-{uuid4().hex[:8]}",
+                    "policies": policies,
+                },
+            )
+            .raise_for_status()
+            .json()
+        )
+        if not result.get("success"):
+            raise RuntimeError("Cloudflare refused the deployment credential")
+        log(
+            f"Minted deployment token {result['result']['id']}; previous tokens remain active until verification"
+        )
+        return result["result"]["value"]
+
+
+def deployment_account() -> str:
+    with client() as c:
+        return account_id(c)
+
+
+def mint_hub_token() -> str:
+    """Use the caller's configured life CLI/admin access, never another app's token."""
+
+    def life_json(*args):
+        result = subprocess.run(
+            ["life", "token", *args], capture_output=True, text=True, check=False
+        )
+        if result.returncode:
+            raise RuntimeError(
+                "life token command failed; check the configured hub and admin access"
+            )
+        return json.loads(result.stdout)
+
+    prefix = os.environ.get("LIFE_ARCHIVE_PREFIX", "")
+    if not re.fullmatch(r"(?:[A-Za-z0-9_.-]+/)+", prefix) or any(
+        p in (".", "..") for p in prefix.split("/")[:-1]
+    ):
+        raise RuntimeError(
+            "LIFE_ARCHIVE_PREFIX must be an exact retained-file prefix ending in slash"
+        )
+    scopes = f"files:read:{prefix},files:write:{prefix}"
+    name = NAME + "-archive"
+    if any(t["name"] == name and not t.get("revoked_at") for t in life_json("list")):
+        raise RuntimeError(
+            "A project archive token already exists. Restore its stored value before provisioning again."
+        )
+    result = life_json("create", name, "--scopes", scopes)
+    if result.get("scopes") != scopes or not result.get("token"):
+        raise RuntimeError("Hub did not return the exact archive scope")
+    log("Dedicated retained-file prefix credential minted")
+    return result["token"]
+
+
+def configured(name: str) -> str:
+    value = os.environ.get(name)
+    if not value or "\n" in value:
+        raise RuntimeError(f"Set {name} for this project's archive service")
+    return value
+
+
+FIELDS.extend(["LIFE_HUB_TOKEN", "LIFE_HUB_URL", "LIFE_ARCHIVE_PREFIX"])
 MINTERS = {
     "api-token": mint_deploy_token,
-    "account-id": lambda: CF_ACCOUNT,
+    "account-id": deployment_account,
+    "LIFE_HUB_TOKEN": mint_hub_token,
+    "LIFE_HUB_URL": lambda: configured("LIFE_HUB_URL"),
+    "LIFE_ARCHIVE_PREFIX": lambda: configured("LIFE_ARCHIVE_PREFIX"),
 }
 
 
