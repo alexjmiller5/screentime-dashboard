@@ -66,7 +66,7 @@ class SecretDelivery(unittest.TestCase):
             tools = Path(directory)
             (tools / "op").write_text('#!/bin/sh\nshift 3\nexec "$@"\n')
             (tools / "bunx").write_text(
-                '#!/usr/bin/env python3\nimport os,json,sys\nvalue=os.environ["LIFE_HUB_TOKEN"]\nassert value not in " ".join(sys.argv)\nbody=json.load(sys.stdin)\nassert body=={k:os.environ[k] for k in ["LIFE_HUB_TOKEN","LIFE_HUB_URL","LIFE_ARCHIVE_PREFIX"]}\nprint("verified")\n'
+                '#!/usr/bin/env python3\nimport os,json,sys,stat\nassert stat.S_ISFIFO(os.fstat(0).st_mode), "stdin must be a real pipe for Wrangler file reads"\nvalue=os.environ["LIFE_HUB_TOKEN"]\nassert value not in " ".join(sys.argv)\nbody=json.load(sys.stdin)\nassert body=={k:os.environ[k] for k in ["LIFE_HUB_TOKEN","LIFE_HUB_URL","LIFE_ARCHIVE_PREFIX"]}\nprint("verified")\n'
             )
             for path in tools.iterdir():
                 path.chmod(0o700)
