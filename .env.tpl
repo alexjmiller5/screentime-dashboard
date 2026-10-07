@@ -1,10 +1,4 @@
-# Canonical secrets manifest — 1Password secret references only, SAFE to commit.
-# Most sites have zero-to-few secrets; Worker bindings (D1, R2, KV) are NOT
-# secrets — they go in wrangler.jsonc.
-# Local dev:      op run --env-file=.env.tpl -- bun run dev
-# Push to CF:     just sync-secrets
-#
-# This app has NO runtime secrets: data is imported client-side from local
-# backups, storage is a D1 binding (wrangler.jsonc), and auth is Cloudflare
-# Access at the edge. CI deploy creds live in .github/workflows/deploy.yml
-# per the infra convention (CI-only creds never go here).
+# Runtime archive connection. Dedicated to this project and its exact retained-file prefix.
+LIFE_HUB_URL=op://Screentime Dashboard/Screentime Dashboard ENV/LIFE_HUB_URL
+LIFE_HUB_TOKEN=op://Screentime Dashboard/Screentime Dashboard ENV/LIFE_HUB_TOKEN
+LIFE_ARCHIVE_PREFIX=op://Screentime Dashboard/Screentime Dashboard ENV/LIFE_ARCHIVE_PREFIX

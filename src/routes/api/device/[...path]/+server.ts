@@ -1,5 +1,6 @@
 import type { RequestHandler } from './$types';
 import { authenticateUploadDevice, revokeUploadDevice } from '$lib/server/device-auth';
+import { GET as archiveGET, POST as archivePOST } from '../../archive/+server';
 import { GET as importsGET, POST as importsPOST } from '../../imports/+server';
 import { POST as ingestPOST } from '../../ingest/+server';
 import { GET as refreshGET } from '../../refresh/+server';
@@ -7,12 +8,14 @@ import { POST as refreshJobPOST } from '../../refresh/job/+server';
 
 const ALLOWED = new Map<string, RequestHandler>([
 	['GET imports', importsGET],
+	['GET archive', archiveGET],
+	['POST archive', archivePOST],
 	['POST imports', importsPOST],
 	['POST ingest', ingestPOST],
 	['GET refresh', refreshGET],
 	['POST refresh/job', refreshJobPOST]
 ]);
-const KNOWN_PATHS = new Set(['session', 'imports', 'ingest', 'refresh', 'refresh/job']);
+const KNOWN_PATHS = new Set(['session', 'imports', 'ingest', 'refresh', 'refresh/job', 'archive']);
 
 function response(body: BodyInit | null, status = 200, contentType?: string): Response {
 	return new Response(body, {

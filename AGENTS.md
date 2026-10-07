@@ -19,8 +19,11 @@ snapshots. Private site - Alex only, via Cloudflare Access.
   bigint nanosecond timestamps; missing or coarse change timestamps fall back
   to reading/hashing. Fingerprints must match before and after a read before
   it can be memoized. Browser imports, cold caches, parser changes and force
-  rebuilds read/hash files. Every refresh still enumerates directories and
-  stats supported files to discover additions and corrections. The atomic local
+  rebuilds read/hash files. With the source archive enabled, ordinary refresh lists snapshot directory names
+  but opens only the newest local snapshot day and dates absent from the archive.
+  Retained history comes from the archive manifest; `sync --scan-local` explicitly
+  checks old local corrections and partial snapshots. Rebuild reads retained
+  originals without consulting local backups. The atomic local
   cache is disposable; deleting or corrupting it only costs a fresh hash pass.
 - **Files commit atomically.** `/api/imports` stages bounded parsed chunks,
   checks completeness, then switches the file's active contribution. Failed
@@ -65,10 +68,22 @@ snapshots. Private site - Alex only, via Cloudflare Access.
   sends only its SHA-256 fingerprint to browser approval, and stores the approved
   credential with Bun's native secret storage. `upload_devices` stores hashes
   and revocation state. The device API authenticates each request and allows
-  only file import, ingest status, refresh reads/progress, and self-revocation.
+  only file import, retained-source access, ingest status, refresh reads/progress, and self-revocation.
   It cannot create refresh jobs or reach dashboard administration endpoints.
   `/connect` must never be bypassed: its assertion-header presence check is a
   fail-closed guard, not JWT verification. Revoked hashes cannot be reapproved.
+- **Originals: Life Data retained-file API.** The Worker uses its own dedicated
+  credential restricted to `LIFE_ARCHIVE_PREFIX`, through `LIFE_HUB_URL`.
+  `LIFE_HUB_TOKEN` stays server-side; upload devices use their existing dashboard
+  enrollment. Immutable source bytes and versioned manifests are verified by
+  SHA-256. The project-owned D1 `meta.archive_head` holds the current manifest
+  reference, advanced with compare-and-swap only after successful retention.
+  Concurrent additions retry without dropping files; stale replacements reject.
+  Original retention precedes derived imports. A parser failure retains prior
+  derived contributions and the immutable earlier source manifest. Partial
+  configuration fails closed. Unconfigured installations explicitly use local
+  sources. Seed and verify a complete manifest before enabling archive rebuilds;
+  local backup retirement requires a verified archive-backed rebuild.
 - **Storage: D1** (`DB` binding, database `screentime-dashboard`, schema in
   `migrations/`): `usage` (source, device, date, bundle_id → seconds),
   `hourly`, file ledger/staged parsed contributions, `markers`, `devices` (uuid → label, edited in the Devices dialog; the
@@ -93,9 +108,9 @@ ingest` fills miniflare's D1 from this Mac's backups folder.
 --public-path '/api/device/*'`. Deploy the authenticated device API and its
   migration before enabling that public path. Protect all production and
   preview hostnames, including `/connect`; only the narrow device API bypasses
-  browser login. No runtime secrets:
-  `.env.tpl` is intentionally empty; CI deploy creds are op:// refs in
-  `.github/workflows/deploy.yml` only (the CI Cloudflare token carries
+  browser login. Runtime archive secrets are resolved from this project's ENV item
+  through `.env.tpl`; deployment streams them to Wrangler through stdin.
+  CI deploy credentials remain separate (the CI Cloudflare token carries
   Workers Scripts + D1 Write, minted by `scripts/provision.py`).
 - **The mini's ingest is a nix-config flake pin, the Worker is CI-deployed** -
   they version-skew independently. Any change to parsing or the refresh protocol

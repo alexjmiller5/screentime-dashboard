@@ -20,6 +20,10 @@ it('the installed-interface sync command persists its native memo and honors --f
 	let begins = 0;
 	const server = createServer(async (req, res) => {
 		res.setHeader('content-type', 'application/json');
+		if (req.url === '/api/device/archive') {
+			res.end(JSON.stringify({ enabled: false }));
+			return;
+		}
 		if (req.url === '/api/device/imports') {
 			if (req.method === 'GET') {
 				res.end(JSON.stringify({ files: ledger, timeZone: 'UTC' }));

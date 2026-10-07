@@ -37,6 +37,8 @@ import type { JobUpdate } from '../lib/server/refresh-job';
 import { homedir, tmpdir } from 'node:os';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { ArchiveClient } from '../lib/import/archive-client';
+import { refreshDirectory } from './archive-input';
 import { syncBackups } from '../lib/import/incremental';
 import { credential, login, logout, dashboardUrl } from './auth';
 import { DEFAULT_READ_TIMEOUT_MS, fsDir } from './fsdir';
@@ -133,7 +135,17 @@ async function sync(force = false, context?: JobContext): Promise<void> {
 		const readTimeout = Number(env.SCREENTIME_READ_TIMEOUT_MS) || DEFAULT_READ_TIMEOUT_MS;
 		const hashCachePath = join(stateDir, 'file-hashes.json');
 		const hashCache = await loadHashCache(hashCachePath);
-		const result = await syncBackups(fsDir(backups, undefined, readTimeout, hashCache), {
+		const archive = await ArchiveClient.open(url, fetchFn);
+		const local = fsDir(backups, undefined, readTimeout, hashCache);
+		const input = archive
+			? force
+				? archive.directory()
+				: process.argv.includes('--scan-local')
+					? local
+					: refreshDirectory(local, archive.directory())
+			: local;
+		const result = await syncBackups(input, {
+			archive: !force ? (archive ?? undefined) : undefined,
 			querySqlite,
 			baseUrl: url,
 			fetchFn,
