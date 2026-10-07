@@ -25,7 +25,7 @@
 //                                            poll runs sync itself
 //   SCREENTIME_TIME_ZONE                     default: the system time zone
 //   SCREENTIME_STATE_DIR                     default ~/Library/Application Support/screentime-ingest
-//                                            (attempt state + the skip-dump flag file)
+//                                            (attempt state, file hash cache + the skip-dump flag file)
 //   SCREENTIME_HOLD_SECONDS                  long-poll hold per request (default 30, max 30)
 //   SCREENTIME_READ_TIMEOUT_MS               per-file read timeout (default 120000) - an
 //                                            iCloud-evicted file that never arrives is
@@ -40,6 +40,7 @@ import { join } from 'node:path';
 import { syncBackups } from '../lib/import/incremental';
 import { credential, login, logout, dashboardUrl } from './auth';
 import { DEFAULT_READ_TIMEOUT_MS, fsDir } from './fsdir';
+import { loadHashCache, saveHashCache } from './hash-cache';
 import {
 	afterFailedAttempt,
 	DashboardClient,
@@ -130,7 +131,9 @@ async function sync(force = false, context?: JobContext): Promise<void> {
 		: undefined;
 	try {
 		const readTimeout = Number(env.SCREENTIME_READ_TIMEOUT_MS) || DEFAULT_READ_TIMEOUT_MS;
-		const result = await syncBackups(fsDir(backups, undefined, readTimeout), {
+		const hashCachePath = join(stateDir, 'file-hashes.json');
+		const hashCache = await loadHashCache(hashCachePath);
+		const result = await syncBackups(fsDir(backups, undefined, readTimeout, hashCache), {
 			querySqlite,
 			baseUrl: url,
 			fetchFn,
@@ -144,6 +147,9 @@ async function sync(force = false, context?: JobContext): Promise<void> {
 			},
 			force
 		});
+		await saveHashCache(hashCachePath, hashCache).catch((error) =>
+			log(`hash cache could not be saved; the next refresh will recheck files: ${String(error)}`)
+		);
 		log(
 			`${result.imported} files imported, ${result.skipped} already imported, ${result.failed} unavailable`
 		);
