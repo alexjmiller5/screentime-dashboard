@@ -76,7 +76,7 @@ export class LifeArchive {
 					Authorization: `Bearer ${this.token}`,
 					'User-Agent': 'screentime-dashboard/1.0'
 				},
-				redirect: 'error',
+				redirect: 'manual',
 				signal: AbortSignal.timeout(120_000)
 			}
 		);
