@@ -27,7 +27,7 @@ newer usage is already present.
 The native CLI remembers hashes locally. Once a file has been imported, a
 refresh checks its filesystem identity and change timestamps without reading
 or hashing its archive again. Same-size edits and replacements are rechecked.
-With Life Data retention enabled, refresh lists snapshot directory names but
+With Soma retention enabled, refresh lists snapshot directory names but
 opens only the newest local snapshot day and previously unseen dates. Historical
 files come from the retained manifest, without inspecting old local files.
 Use `screentime-ingest sync --scan-local` or the folder importer to check
@@ -42,7 +42,7 @@ one fresh hash pass and does not remove imported history.
 - **Import from this Mac** opens a folder picker. Select the backups folder;
   parsing happens in the browser, using the same ledger and upload protocol.
 - **Rebuild** skips the new backup and reprocesses retained originals from
-  Life Data. Without archive configuration it uses local files. Unavailable
+  Soma. Without archive configuration it uses local files. Unavailable
   files keep their previously imported data.
 
 Uploads are staged per file and committed only when every chunk is present.
@@ -153,11 +153,11 @@ Marker content lives in D1, never in source control.
 
 ## Notes
 
-- Original snapshots are retained through Life Data's supported file API.
-  Configure `LIFE_HUB_URL`, a dedicated `LIFE_HUB_TOKEN` with file read/write
-  scopes restricted to `LIFE_ARCHIVE_PREFIX`, and that prefix in the project ENV
+- Original snapshots are retained through Soma's supported file API.
+  Configure `SOMA_HUB_URL`, a dedicated `SOMA_HUB_TOKEN` with file read/write
+  scopes restricted to `SOMA_ARCHIVE_PREFIX`, and that prefix in the project ENV
   item referenced by `.env.tpl`. CI delivers these as Worker secrets; neither
-  the browser nor installed uploader receives the Life Data credential. The
+  the browser nor installed uploader receives the Soma credential. The
   dashboard keeps its own D1 derived data and manifest reference. Archive
   failures stop imports instead of silently losing originals. Before removing
   old backups, verify every original and a complete archive-backed rebuild.

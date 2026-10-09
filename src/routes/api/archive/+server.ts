@@ -1,22 +1,22 @@
 import { error, json, type RequestHandler } from '@sveltejs/kit';
 import { env as privateEnv } from '$env/dynamic/private';
 import { ArchiveSource, archiveHeadStore } from '$lib/server/archive-source';
-import { LifeArchive, boundedBytes } from '$lib/server/archive';
+import { SomaArchive, boundedBytes } from '$lib/server/archive';
 import { parseArchiveManifest } from '$lib/import/archive';
 function configured(platform: App.Platform | undefined, fetchFn: typeof fetch) {
 	const env = { ...privateEnv, ...platform?.env } as {
-		LIFE_HUB_URL?: string;
-		LIFE_HUB_TOKEN?: string;
-		LIFE_ARCHIVE_PREFIX?: string;
+		SOMA_HUB_URL?: string;
+		SOMA_HUB_TOKEN?: string;
+		SOMA_ARCHIVE_PREFIX?: string;
 		DB: D1Database;
 	};
-	if (!env.LIFE_HUB_URL && !env.LIFE_HUB_TOKEN && !env.LIFE_ARCHIVE_PREFIX) return null;
-	if (!env.LIFE_HUB_URL || !env.LIFE_HUB_TOKEN || !env.LIFE_ARCHIVE_PREFIX)
+	if (!env.SOMA_HUB_URL && !env.SOMA_HUB_TOKEN && !env.SOMA_ARCHIVE_PREFIX) return null;
+	if (!env.SOMA_HUB_URL || !env.SOMA_HUB_TOKEN || !env.SOMA_ARCHIVE_PREFIX)
 		throw error(503, 'Archive configuration is incomplete.');
 	return new ArchiveSource(
 		archiveHeadStore(env.DB),
-		new LifeArchive(env.LIFE_HUB_URL, env.LIFE_HUB_TOKEN, env.LIFE_ARCHIVE_PREFIX, fetchFn),
-		env.LIFE_ARCHIVE_PREFIX
+		new SomaArchive(env.SOMA_HUB_URL, env.SOMA_HUB_TOKEN, env.SOMA_ARCHIVE_PREFIX, fetchFn),
+		env.SOMA_ARCHIVE_PREFIX
 	);
 }
 const headers = { 'cache-control': 'private, no-store' };
