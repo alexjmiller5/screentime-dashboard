@@ -154,9 +154,11 @@ Marker content lives in D1, never in source control.
 ## Notes
 
 - Original snapshots are retained through Soma's supported file API.
-  Configure `SOMA_HUB_URL`, a dedicated `SOMA_HUB_TOKEN` with file read/write
-  scopes restricted to `SOMA_ARCHIVE_PREFIX`, and that prefix in the project ENV
-  item referenced by `.env.tpl`. CI delivers these as Worker secrets; neither
+  Configure `SOMA_HUB_URL`, `SOMA_ARCHIVE_PREFIX`, and a `SOMA_HUB_TOKEN`
+  enrolled with a Soma profile granting file read/write on exactly that prefix
+  (`soma login --profile <id> --start pending.json`, the owner approves the
+  printed link, `soma login --claim pending.json --wait`), all in the project
+  ENV item referenced by `.env.tpl`. Bootstrap never mints this token. CI delivers these as Worker secrets; neither
   the browser nor installed uploader receives the Soma credential. The
   dashboard keeps its own D1 derived data and manifest reference. Archive
   failures stop imports instead of silently losing originals. Before removing

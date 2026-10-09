@@ -74,8 +74,9 @@ snapshots. Private site - Alex only, via Cloudflare Access.
   It cannot create refresh jobs or reach dashboard administration endpoints.
   `/connect` must never be bypassed: its assertion-header presence check is a
   fail-closed guard, not JWT verification. Revoked hashes cannot be reapproved.
-- **Originals: Soma retained-file API.** The Worker uses its own dedicated
-  credential restricted to `SOMA_ARCHIVE_PREFIX`, through `SOMA_HUB_URL`.
+- **Originals: Soma retained-file API.** The Worker uses its own credential,
+  enrolled with the Soma profile `screentime-dashboard-archive-v1` (file
+  read/write on `SOMA_ARCHIVE_PREFIX` only), through `SOMA_HUB_URL`.
   `SOMA_HUB_TOKEN` stays server-side; upload devices use their existing dashboard
   enrollment. Immutable source bytes and versioned manifests are verified by
   SHA-256. The project-owned D1 `meta.archive_head` holds the current manifest

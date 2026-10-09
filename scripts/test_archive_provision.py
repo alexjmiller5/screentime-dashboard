@@ -1,63 +1,21 @@
 """Synthetic provisioning checks; no provider or vault calls."""
 
-import json
 import os
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 import provision
 
 
 class ArchiveToken(unittest.TestCase):
-    def test_scopes_are_only_the_configured_retained_file_prefix(self):
-        scopes = "files:read:raw/example/,files:write:raw/example/"
-        with (
-            patch.dict(os.environ, {"SOMA_ARCHIVE_PREFIX": "raw/example/"}),
-            patch.object(provision.subprocess, "run") as run,
-        ):
-            run.side_effect = [
-                subprocess.CompletedProcess([], 0, "[]", ""),
-                subprocess.CompletedProcess(
-                    [], 0, json.dumps({"token": "fixture", "scopes": scopes}), ""
-                ),
-            ]
-            self.assertEqual(provision.mint_hub_token(), "fixture")
-            self.assertEqual(
-                run.call_args.args[0],
-                [
-                    "soma",
-                    "token",
-                    "create",
-                    "screentime-dashboard-archive",
-                    "--scopes",
-                    scopes,
-                ],
-            )
-
-    def test_never_replaces_an_existing_consumer_token(self):
-        with (
-            patch.dict(os.environ, {"SOMA_ARCHIVE_PREFIX": "raw/example/"}),
-            patch.object(provision.subprocess, "run") as run,
-        ):
-            run.return_value = subprocess.CompletedProcess(
-                [], 0, '[{"name":"screentime-dashboard-archive","revoked_at":null}]', ""
-            )
-            with self.assertRaises(RuntimeError):
-                provision.mint_hub_token()
-            self.assertEqual(run.call_count, 1)
-
-    def test_malformed_or_broadened_scope_is_rejected(self):
-        for prefix in ["", "raw/example", "raw/example/,full", "../"]:
-            with (
-                patch.dict(os.environ, {"SOMA_ARCHIVE_PREFIX": prefix}),
-                patch.object(provision.subprocess, "run") as run,
-            ):
-                with self.assertRaises(RuntimeError):
-                    provision.mint_hub_token()
-                run.assert_not_called()
+    def test_hub_token_is_enrolled_never_minted(self):
+        # The archive credential comes from an owner-approved Soma profile
+        # enrollment, so bootstrap must not mint one with operator access.
+        self.assertNotIn("SOMA_HUB_TOKEN", provision.FIELDS)
+        self.assertNotIn("SOMA_HUB_TOKEN", provision.MINTERS)
+        self.assertIn("SOMA_ARCHIVE_PREFIX", provision.FIELDS)
 
 
 class SecretDelivery(unittest.TestCase):
