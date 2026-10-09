@@ -8,9 +8,7 @@ The provisioning credential only mints replacements. Save the new value,
 deploy and verify before retiring the previous token by its provider ID.
 """
 
-import json
 import os
-import re
 import subprocess
 import sys
 from uuid import uuid4
@@ -92,39 +90,6 @@ def deployment_account() -> str:
         return account_id(c)
 
 
-def mint_hub_token() -> str:
-    """Use the caller's configured life CLI/admin access, never another app's token."""
-
-    def soma_json(*args):
-        result = subprocess.run(
-            ["soma", "token", *args], capture_output=True, text=True, check=False
-        )
-        if result.returncode:
-            raise RuntimeError(
-                "soma token command failed; check the configured hub and admin access"
-            )
-        return json.loads(result.stdout)
-
-    prefix = os.environ.get("SOMA_ARCHIVE_PREFIX", "")
-    if not re.fullmatch(r"(?:[A-Za-z0-9_.-]+/)+", prefix) or any(
-        p in (".", "..") for p in prefix.split("/")[:-1]
-    ):
-        raise RuntimeError(
-            "SOMA_ARCHIVE_PREFIX must be an exact retained-file prefix ending in slash"
-        )
-    scopes = f"files:read:{prefix},files:write:{prefix}"
-    name = NAME + "-archive"
-    if any(t["name"] == name and not t.get("revoked_at") for t in soma_json("list")):
-        raise RuntimeError(
-            "A project archive token already exists. Restore its stored value before provisioning again."
-        )
-    result = soma_json("create", name, "--scopes", scopes)
-    if result.get("scopes") != scopes or not result.get("token"):
-        raise RuntimeError("Hub did not return the exact archive scope")
-    log("Dedicated retained-file prefix credential minted")
-    return result["token"]
-
-
 def configured(name: str) -> str:
     value = os.environ.get(name)
     if not value or "\n" in value:
@@ -132,11 +97,10 @@ def configured(name: str) -> str:
     return value
 
 
-FIELDS.extend(["SOMA_HUB_TOKEN", "SOMA_HUB_URL", "SOMA_ARCHIVE_PREFIX"])
+FIELDS.extend(["SOMA_HUB_URL", "SOMA_ARCHIVE_PREFIX"])
 MINTERS = {
     "api-token": mint_deploy_token,
     "account-id": deployment_account,
-    "SOMA_HUB_TOKEN": mint_hub_token,
     "SOMA_HUB_URL": lambda: configured("SOMA_HUB_URL"),
     "SOMA_ARCHIVE_PREFIX": lambda: configured("SOMA_ARCHIVE_PREFIX"),
 }
