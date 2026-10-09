@@ -95,30 +95,30 @@ def deployment_account() -> str:
 def mint_hub_token() -> str:
     """Use the caller's configured life CLI/admin access, never another app's token."""
 
-    def life_json(*args):
+    def soma_json(*args):
         result = subprocess.run(
-            ["life", "token", *args], capture_output=True, text=True, check=False
+            ["soma", "token", *args], capture_output=True, text=True, check=False
         )
         if result.returncode:
             raise RuntimeError(
-                "life token command failed; check the configured hub and admin access"
+                "soma token command failed; check the configured hub and admin access"
             )
         return json.loads(result.stdout)
 
-    prefix = os.environ.get("LIFE_ARCHIVE_PREFIX", "")
+    prefix = os.environ.get("SOMA_ARCHIVE_PREFIX", "")
     if not re.fullmatch(r"(?:[A-Za-z0-9_.-]+/)+", prefix) or any(
         p in (".", "..") for p in prefix.split("/")[:-1]
     ):
         raise RuntimeError(
-            "LIFE_ARCHIVE_PREFIX must be an exact retained-file prefix ending in slash"
+            "SOMA_ARCHIVE_PREFIX must be an exact retained-file prefix ending in slash"
         )
     scopes = f"files:read:{prefix},files:write:{prefix}"
     name = NAME + "-archive"
-    if any(t["name"] == name and not t.get("revoked_at") for t in life_json("list")):
+    if any(t["name"] == name and not t.get("revoked_at") for t in soma_json("list")):
         raise RuntimeError(
             "A project archive token already exists. Restore its stored value before provisioning again."
         )
-    result = life_json("create", name, "--scopes", scopes)
+    result = soma_json("create", name, "--scopes", scopes)
     if result.get("scopes") != scopes or not result.get("token"):
         raise RuntimeError("Hub did not return the exact archive scope")
     log("Dedicated retained-file prefix credential minted")
@@ -132,13 +132,13 @@ def configured(name: str) -> str:
     return value
 
 
-FIELDS.extend(["LIFE_HUB_TOKEN", "LIFE_HUB_URL", "LIFE_ARCHIVE_PREFIX"])
+FIELDS.extend(["SOMA_HUB_TOKEN", "SOMA_HUB_URL", "SOMA_ARCHIVE_PREFIX"])
 MINTERS = {
     "api-token": mint_deploy_token,
     "account-id": deployment_account,
-    "LIFE_HUB_TOKEN": mint_hub_token,
-    "LIFE_HUB_URL": lambda: configured("LIFE_HUB_URL"),
-    "LIFE_ARCHIVE_PREFIX": lambda: configured("LIFE_ARCHIVE_PREFIX"),
+    "SOMA_HUB_TOKEN": mint_hub_token,
+    "SOMA_HUB_URL": lambda: configured("SOMA_HUB_URL"),
+    "SOMA_ARCHIVE_PREFIX": lambda: configured("SOMA_ARCHIVE_PREFIX"),
 }
 
 

@@ -14,7 +14,7 @@ it('leaves an unconfigured local-only installation explicit and never attempts a
 	expect(e.fetch).not.toHaveBeenCalled();
 });
 it('fails on incomplete archive setup instead of silently importing without retention', async () => {
-	const e = event(undefined, {}, { LIFE_HUB_URL: 'https://hub.example' });
+	const e = event(undefined, {}, { SOMA_HUB_URL: 'https://hub.example' });
 	await expect(GET(e)).rejects.toMatchObject({ status: 503 });
 	expect(e.fetch).not.toHaveBeenCalled();
 });

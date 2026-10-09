@@ -15,7 +15,7 @@ class ArchiveToken(unittest.TestCase):
     def test_scopes_are_only_the_configured_retained_file_prefix(self):
         scopes = "files:read:raw/example/,files:write:raw/example/"
         with (
-            patch.dict(os.environ, {"LIFE_ARCHIVE_PREFIX": "raw/example/"}),
+            patch.dict(os.environ, {"SOMA_ARCHIVE_PREFIX": "raw/example/"}),
             patch.object(provision.subprocess, "run") as run,
         ):
             run.side_effect = [
@@ -28,7 +28,7 @@ class ArchiveToken(unittest.TestCase):
             self.assertEqual(
                 run.call_args.args[0],
                 [
-                    "life",
+                    "soma",
                     "token",
                     "create",
                     "screentime-dashboard-archive",
@@ -39,7 +39,7 @@ class ArchiveToken(unittest.TestCase):
 
     def test_never_replaces_an_existing_consumer_token(self):
         with (
-            patch.dict(os.environ, {"LIFE_ARCHIVE_PREFIX": "raw/example/"}),
+            patch.dict(os.environ, {"SOMA_ARCHIVE_PREFIX": "raw/example/"}),
             patch.object(provision.subprocess, "run") as run,
         ):
             run.return_value = subprocess.CompletedProcess(
@@ -52,7 +52,7 @@ class ArchiveToken(unittest.TestCase):
     def test_malformed_or_broadened_scope_is_rejected(self):
         for prefix in ["", "raw/example", "raw/example/,full", "../"]:
             with (
-                patch.dict(os.environ, {"LIFE_ARCHIVE_PREFIX": prefix}),
+                patch.dict(os.environ, {"SOMA_ARCHIVE_PREFIX": prefix}),
                 patch.object(provision.subprocess, "run") as run,
             ):
                 with self.assertRaises(RuntimeError):
@@ -66,16 +66,16 @@ class SecretDelivery(unittest.TestCase):
             tools = Path(directory)
             (tools / "op").write_text('#!/bin/sh\nshift 3\nexec "$@"\n')
             (tools / "bunx").write_text(
-                '#!/usr/bin/env python3\nimport os,json,sys,stat\nassert stat.S_ISFIFO(os.fstat(0).st_mode), "stdin must be a real pipe for Wrangler file reads"\nvalue=os.environ["LIFE_HUB_TOKEN"]\nassert value not in " ".join(sys.argv)\nbody=json.load(sys.stdin)\nassert body=={k:os.environ[k] for k in ["LIFE_HUB_TOKEN","LIFE_HUB_URL","LIFE_ARCHIVE_PREFIX"]}\nprint("verified")\n'
+                '#!/usr/bin/env python3\nimport os,json,sys,stat\nassert stat.S_ISFIFO(os.fstat(0).st_mode), "stdin must be a real pipe for Wrangler file reads"\nvalue=os.environ["SOMA_HUB_TOKEN"]\nassert value not in " ".join(sys.argv)\nbody=json.load(sys.stdin)\nassert body=={k:os.environ[k] for k in ["SOMA_HUB_TOKEN","SOMA_HUB_URL","SOMA_ARCHIVE_PREFIX"]}\nprint("verified")\n'
             )
             for path in tools.iterdir():
                 path.chmod(0o700)
             env = {
                 **os.environ,
                 "PATH": directory + ":" + os.environ["PATH"],
-                "LIFE_HUB_TOKEN": "fixture-only",
-                "LIFE_HUB_URL": "https://hub.example",
-                "LIFE_ARCHIVE_PREFIX": "raw/example/",
+                "SOMA_HUB_TOKEN": "fixture-only",
+                "SOMA_HUB_URL": "https://hub.example",
+                "SOMA_ARCHIVE_PREFIX": "raw/example/",
             }
             script = Path(__file__).with_name("sync-secrets.sh")
             good = subprocess.run(
@@ -87,7 +87,7 @@ class SecretDelivery(unittest.TestCase):
             )
             self.assertEqual(good.returncode, 0, good.stderr)
             self.assertEqual(good.stdout.strip(), "verified")
-            for key in ["LIFE_HUB_TOKEN", "LIFE_HUB_URL", "LIFE_ARCHIVE_PREFIX"]:
+            for key in ["SOMA_HUB_TOKEN", "SOMA_HUB_URL", "SOMA_ARCHIVE_PREFIX"]:
                 for bad in ["", "CHANGEME", "op://unresolved/value", "invalid\nvalue"]:
                     result = subprocess.run(
                         ["bash", str(script)],

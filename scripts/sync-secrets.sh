@@ -3,7 +3,7 @@
 # Resolve values inside op run, so only deployment logs reach its output filter.
 set -euo pipefail
 op run --env-file=.env.tpl -- bash -c 'set -euo pipefail
-bun -e '"'"'const keys = ["LIFE_HUB_URL", "LIFE_HUB_TOKEN", "LIFE_ARCHIVE_PREFIX"];
+bun -e '"'"'const keys = ["SOMA_HUB_URL", "SOMA_HUB_TOKEN", "SOMA_ARCHIVE_PREFIX"];
 const values = Object.fromEntries(keys.map(key => {
   const value = process.env[key];
   if (!value || value === "CHANGEME" || value.startsWith("op://") || value.includes("\n"))

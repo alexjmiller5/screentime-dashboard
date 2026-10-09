@@ -1,5 +1,5 @@
 import type { FetchFn } from '../import/incremental';
-/** Supported Life Data retained-file API. Only this service's configured prefix is reachable. */
+/** Supported Soma retained-file API. Only this service's configured prefix is reachable. */
 export const MAX_ARCHIVE_BYTES = 32 * 1024 * 1024;
 export async function sha256(bytes: ArrayBuffer): Promise<string> {
 	return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), (b) =>
@@ -41,7 +41,7 @@ const validKey = (key: string) =>
 	key.isWellFormed() &&
 	!/[\\\u0000-\u001f\u007f?#%:]/.test(key) &&
 	key.split('/').every((p) => !!p && p !== '.' && p !== '..');
-export class LifeArchive {
+export class SomaArchive {
 	private base: string;
 	constructor(
 		base: string,

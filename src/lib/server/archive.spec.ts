@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import { LifeArchive } from './archive';
+import { SomaArchive } from './archive';
 const bytes = new TextEncoder().encode('original');
 const digest = async (b: Uint8Array<ArrayBuffer>) =>
 	Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', b)), (x) =>
@@ -7,7 +7,7 @@ const digest = async (b: Uint8Array<ArrayBuffer>) =>
 	).join('');
 it('keeps requests on the configured service and prefix, without forwarding redirects', async () => {
 	const fetch = vi.fn().mockResolvedValue(new Response(bytes));
-	const archive = new LifeArchive('https://hub.example', 'secret', 'raw/example/', fetch);
+	const archive = new SomaArchive('https://hub.example', 'secret', 'raw/example/', fetch);
 	await expect(archive.read('raw/other/private')).rejects.toThrow();
 	await expect(archive.read('raw/example/../private')).rejects.toThrow();
 	expect(fetch).not.toHaveBeenCalled();
@@ -27,7 +27,7 @@ it('publishes originals only with conditional creation and server-verified check
 		)
 		.mockResolvedValueOnce(new Response(null, { status: 412 }))
 		.mockResolvedValueOnce(new Response(bytes));
-	const archive = new LifeArchive('https://hub.example', 'secret', 'raw/example/', fetch);
+	const archive = new SomaArchive('https://hub.example', 'secret', 'raw/example/', fetch);
 	await archive.create('raw/example/file', bytes.buffer);
 	await archive.create('raw/example/file', bytes.buffer);
 	expect(fetch.mock.calls[0][1]).toMatchObject({
@@ -41,7 +41,7 @@ it('rejects corrupt or ambiguous retained content instead of accepting a success
 		.mockResolvedValueOnce(new Response('{}', { status: 201 }))
 		.mockResolvedValueOnce(new Response(null, { status: 412 }))
 		.mockResolvedValueOnce(new Response('changed'));
-	const archive = new LifeArchive('https://hub.example', 'secret', 'raw/example/', fetch);
+	const archive = new SomaArchive('https://hub.example', 'secret', 'raw/example/', fetch);
 	await expect(archive.create('raw/example/file', bytes.buffer)).rejects.toThrow();
 	await expect(archive.create('raw/example/file', bytes.buffer)).rejects.toThrow();
 });
@@ -52,7 +52,7 @@ it('forbids credentials and non-origin paths in service URLs', () => {
 		'https://hub.example/path',
 		'https://hub.example/?x=1'
 	])
-		expect(() => new LifeArchive(url, 'secret', 'raw/example/', vi.fn())).toThrow();
+		expect(() => new SomaArchive(url, 'secret', 'raw/example/', vi.fn())).toThrow();
 });
 
 it('rejects redirect responses without following them or exposing the credential to another host', async () => {
@@ -61,7 +61,7 @@ it('rejects redirect responses without following them or exposing the credential
 		.mockResolvedValue(
 			new Response(null, { status: 302, headers: { Location: 'https://foreign.example/file' } })
 		);
-	const archive = new LifeArchive('https://hub.example', 'secret', 'raw/example/', transport);
+	const archive = new SomaArchive('https://hub.example', 'secret', 'raw/example/', transport);
 	await expect(archive.read('raw/example/file')).rejects.toThrow('302');
 	expect(transport).toHaveBeenCalledTimes(1);
 });
