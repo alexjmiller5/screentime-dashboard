@@ -33,7 +33,7 @@
 	import { readSavedApps, isSavedAppsActive } from '$lib/viz/saved-apps';
 	import { iconUrl } from '$lib/viz/icons.svelte';
 	import RangeSlider from '$lib/components/RangeSlider.svelte';
-	import { readDateSelection } from '$lib/viz/date-viewport';
+	import { readDateSelection } from '$lib/viz/date-selection';
 	import { PRESET_LABELS, getPresetRange, type PresetLabel } from '$lib/viz/presets';
 	import Seo from '$lib/components/seo.svelte';
 	import { Button } from '$lib/components/ui/button';

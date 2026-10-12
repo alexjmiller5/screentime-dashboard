@@ -189,13 +189,13 @@ adapter and compiler options live in `vite.config.ts` inside the
 
 ## UI conventions
 
-- **Date navigation** uses a separate 90-calendar-day viewport, anchored to the
-  selected end. Earlier/Later pans the viewport without changing selection;
-  dragging at an edge keeps panning through history. Handles and the filled
-  span support arrow keys, Shift for weeks, Page keys and Home/End. Calendar
-  math is UTC-based; viewport work is bounded independently of archive size.
-  Relative rules and validated Custom dates stay in per-device preferences.
-  `scripts/test-date-viewport.mjs` runs the browser regression using a supplied
+- **Date range** is the burndown-style two-handle slider over the whole data
+  span: drag either handle, drag the filled span to slide the window, click the
+  track to jump the nearest handle; handles grow on hover/drag and on touch.
+  Arrow keys move a focused handle a day, Page keys a week, Home/End to its
+  limit. Calendar math is UTC (`addDays`). Relative rules and validated Custom
+  dates stay in per-device preferences (`date-selection.ts`).
+  `scripts/test-date-range.mjs` runs the browser regression using a supplied
   owned CDP target and localhost dev URL with synthetic API responses.
 
 - **Chart views** share the date window, devices and app selection, saved with

@@ -1,5 +1,5 @@
 // Run against an owned synthetic browser target, never a production page:
-// bun scripts/test-date-viewport.mjs <CDP page websocket> <local dev URL>
+// bun scripts/test-date-range.mjs <CDP page websocket> <local dev URL>
 import assert from 'node:assert/strict';
 const [socketUrl, url] = process.argv.slice(2);
 if (!socketUrl || !/^http:\/\/(localhost|127\.0\.0\.1):\d+\/$/.test(url ?? '')) {
@@ -65,6 +65,8 @@ const fixture = {
 };
 let injection;
 try {
+	// Key events reach only the frontmost tab's focused element.
+	await send('Page.bringToFront');
 	await send('Page.enable');
 	({ identifier: injection } = await send('Page.addScriptToEvaluateOnNewDocument', {
 		source: `
@@ -78,20 +80,12 @@ try {
 	`
 	}));
 	await send('Page.navigate', { url });
-	await until("document.querySelector('nav[aria-label]') !== null");
+	await until("document.querySelector('[role=slider]') !== null");
 	await evaluate("localStorage.removeItem('screentime:prefs')");
 	const previousDocument = await evaluate('performance.timeOrigin');
 	await send('Page.reload');
 	await until(`performance.timeOrigin !== ${previousDocument}`);
-	await until("document.querySelector('nav[aria-label]') !== null");
-	assert.equal(
-		await evaluate(
-			"document.querySelector('[aria-label=\"Date viewport\"]')?.textContent.includes('Jul 8, 2026')"
-		),
-		true,
-		'initial viewport shows trailing 90 days, not full archive'
-	);
-	console.log('PASS: initial bounded viewport');
+	await until("document.querySelector('[role=slider]') !== null");
 	const prefs = () => evaluate("JSON.parse(localStorage.getItem('screentime:prefs'))");
 	const selected = async () => {
 		const p = await prefs();
@@ -118,67 +112,65 @@ try {
 		const before = await evaluate('performance.timeOrigin');
 		await send('Page.reload');
 		await until(
-			`performance.timeOrigin !== ${before} && document.querySelector('nav[aria-label]') !== null`
+			`performance.timeOrigin !== ${before} && document.querySelector('[role=slider]') !== null`
 		);
 	}
-	const original = await selected();
-	await click('[aria-label="Show earlier dates"]');
-	await until(
-		"document.querySelector('[aria-label=\"Date viewport\"]').textContent.includes('Jun 8, 2026')"
-	);
-	assert.deepEqual(
-		await selected(),
-		original,
-		'viewport navigation leaves selected dates unchanged'
-	);
+	assert.deepEqual(await selected(), ['2026-07-08', '2026-10-06'], 'fresh visit selects 90D');
 	assert.equal((await prefs()).preset, '90D');
-	await click('[aria-label="Show later dates"]');
+	assert.equal(
+		await evaluate(
+			"document.querySelector('[aria-label=\"Start date\"]').getAttribute('aria-valuetext')"
+		),
+		'Jul 8, 2026'
+	);
 	await click('[aria-label="Start date"]');
-	await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowRight', code: 'ArrowRight' });
-	await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowRight', code: 'ArrowRight' });
+	await send('Input.dispatchKeyEvent', {
+		type: 'keyDown',
+		key: 'ArrowRight',
+		code: 'ArrowRight',
+		windowsVirtualKeyCode: 39
+	});
+	await send('Input.dispatchKeyEvent', {
+		type: 'keyUp',
+		key: 'ArrowRight',
+		code: 'ArrowRight',
+		windowsVirtualKeyCode: 39
+	});
 	await until("JSON.parse(localStorage.getItem('screentime:prefs')).dateStart === '2026-07-09'");
 	assert.equal((await prefs()).preset, '', 'keyboard adjustment selects Custom');
 	await reload();
 	assert.deepEqual(await selected(), ['2026-07-09', '2026-10-06'], 'Custom dates survive reload');
-	// A held pointer continues panning even without subsequent pointermove events.
+	// Dragging the filled span (just before the start handle) slides the whole window.
 	const drag = await evaluate(
-		`(()=>{const e=document.querySelector('[aria-label="Move selected date range"]');const r=e.getBoundingClientRect();const t=e.parentElement.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,left:t.left}})()`
+		`(()=>{const r=document.querySelector('[aria-label="Start date"]').previousElementSibling.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`
 	);
 	await send('Input.dispatchMouseEvent', {
 		type: 'mousePressed',
 		button: 'left',
 		clickCount: 1,
-		x: drag.x,
-		y: drag.y
+		...drag
 	});
 	await send('Input.dispatchMouseEvent', {
 		type: 'mouseMoved',
 		button: 'left',
 		buttons: 1,
-		x: drag.left - 8,
+		x: drag.x - 40,
 		y: drag.y
 	});
-	const afterMove = await selected();
-	await new Promise((resolve) => setTimeout(resolve, 350));
-	const afterHold = await selected();
 	await send('Input.dispatchMouseEvent', {
 		type: 'mouseReleased',
 		button: 'left',
 		clickCount: 1,
-		x: drag.left - 8,
+		x: drag.x - 40,
 		y: drag.y
 	});
-	assert.ok(
-		afterHold[0] < afterMove[0],
-		'stationary pointer beyond edge keeps panning into history'
-	);
+	await until("JSON.parse(localStorage.getItem('screentime:prefs')).dateStart < '2026-07-09'");
+	const afterDrag = await selected();
 	assert.equal(
-		Date.parse(afterHold[1]) - Date.parse(afterHold[0]),
+		Date.parse(afterDrag[1]) - Date.parse(afterDrag[0]),
 		89 * 86400000,
 		'whole-window drag preserves selected width'
 	);
-	await new Promise((resolve) => setTimeout(resolve, 200));
-	assert.deepEqual(await selected(), afterHold, 'pointer release stops panning');
 	// Validate independent per-device restoration of the existing composed filters.
 	await evaluate(
 		`localStorage.setItem('screentime:prefs',JSON.stringify({preset:'30D',bucket:'week',view:'hourly',showTable:true,measuredBy:'infocus',excludedDevices:['Phone'],picked:['Safari'],savedApps:['Safari']}))`
@@ -213,15 +205,19 @@ try {
 	);
 	await reload();
 	await click('[aria-label="Start date"]');
-	await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'End', code: 'End' });
-	await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'End', code: 'End' });
-	await until("JSON.parse(localStorage.getItem('screentime:prefs')).dateStart === '2024-01-30'");
-	assert.ok(
-		await evaluate(
-			"document.querySelector('[aria-label=\"Date viewport\"]').textContent.includes('Jan 30, 2024')"
-		),
-		'Home/End keeps the actually clamped handle visible'
-	);
+	await send('Input.dispatchKeyEvent', {
+		type: 'keyDown',
+		key: 'End',
+		code: 'End',
+		windowsVirtualKeyCode: 35
+	});
+	await send('Input.dispatchKeyEvent', {
+		type: 'keyUp',
+		key: 'End',
+		code: 'End',
+		windowsVirtualKeyCode: 35
+	});
+	await until("JSON.parse(localStorage.getItem('screentime:prefs')).dateStart === '2024-01-29'");
 	await evaluate("localStorage.removeItem('screentime:prefs')");
 	await reload();
 	await send('Emulation.setDeviceMetricsOverride', {
@@ -230,26 +226,27 @@ try {
 		deviceScaleFactor: 1,
 		mobile: true
 	});
+	await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+	await reload();
 	assert.equal(
 		await evaluate('document.documentElement.scrollWidth <= innerWidth'),
 		true,
 		'390px layout has no horizontal page overflow'
 	);
-	assert.ok(
-		await evaluate(
-			'document.querySelector(\'[aria-label="Start date"]\').getBoundingClientRect().width >= 44'
-		),
-		'touch targets are at least 44px wide'
+	// Touch handles grow to 24px after a short transition.
+	await until(
+		'document.querySelector(\'[aria-label="Start date"]\').getBoundingClientRect().width >= 24'
 	);
 	if (process.env.SCREENSHOT_PATH) {
 		const { data } = await send('Page.captureScreenshot', { format: 'png' });
 		await Bun.write(process.env.SCREENSHOT_PATH, Buffer.from(data, 'base64'));
 	}
 	console.log(
-		'PASS: viewport navigation, keyboard dates, edge hold/release, range width, reload, composed filters, malformed dates, 390px layout'
+		'PASS: 90D default, keyboard dates, span drag, Home/End, reload, composed filters, malformed dates, 390px touch layout'
 	);
 } finally {
 	await send('Emulation.clearDeviceMetricsOverride');
+	await send('Emulation.setTouchEmulationEnabled', { enabled: false });
 	if (injection) await send('Page.removeScriptToEvaluateOnNewDocument', { identifier: injection });
 	socket.close();
 }
