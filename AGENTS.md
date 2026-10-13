@@ -193,7 +193,9 @@ adapter and compiler options live in `vite.config.ts` inside the
   span: drag either handle, drag the filled span to slide the window, click the
   track to jump the nearest handle; handles grow on hover/drag and on touch.
   Arrow keys move a focused handle a day, Page keys a week, Home/End to its
-  limit. Calendar math is UTC (`addDays`). Relative rules and validated Custom
+  limit. Clicking either selected date opens the browser's native calendar
+  for that bound; out-of-range picks clamp like a key press. Calendar math is
+  UTC (`addDays`). Relative rules and validated Custom
   dates stay in per-device preferences (`date-selection.ts`).
   `scripts/test-date-range.mjs` runs the browser regression using a supplied
   owned CDP target and localhost dev URL with synthetic API responses.

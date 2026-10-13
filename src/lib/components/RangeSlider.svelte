@@ -149,10 +149,31 @@
 		}
 	}
 
+	const HANDLES = ['start', 'end'] as const;
+
+	// Offsets a handle may take: each stops a day short of the other.
+	function limits(handle: 'start' | 'end'): [number, number] {
+		return handle === 'start' ? [0, endOffset - 1] : [startOffset + 1, totalDays];
+	}
+
+	// Clamps the offset into the handle's limits and returns the date it landed on.
+	function moveHandle(handle: 'start' | 'end', offset: number): string {
+		const [lower, upper] = limits(handle);
+		const value = offsetToDate(Math.max(lower, Math.min(upper, offset)));
+		if (handle === 'start') onchange(value, end);
+		else onchange(start, value);
+		return value;
+	}
+
+	// A typed or cleared date can fall outside the calendar's bounds: clamp it like a key press.
+	function pickDate(input: HTMLInputElement, handle: 'start' | 'end'): void {
+		const current = handle === 'start' ? start : end;
+		input.value = input.value ? moveHandle(handle, dateToOffset(input.value)) : current;
+	}
+
 	function handleKey(e: KeyboardEvent, handle: 'start' | 'end'): void {
 		const current = handle === 'start' ? startOffset : endOffset;
-		const lower = handle === 'start' ? 0 : startOffset + 1;
-		const upper = handle === 'start' ? endOffset - 1 : totalDays;
+		const [lower, upper] = limits(handle);
 		const steps: Record<string, number> = {
 			ArrowLeft: -1,
 			ArrowDown: -1,
@@ -172,9 +193,7 @@
 		if (next === null) return;
 		e.preventDefault();
 		e.stopPropagation();
-		const value = offsetToDate(Math.max(lower, Math.min(upper, next)));
-		if (handle === 'start') onchange(value, end);
-		else onchange(start, value);
+		moveHandle(handle, next);
 	}
 
 	// Handle sizes scale up on touch so the hit area is closer to 44×44
@@ -205,14 +224,30 @@
 </script>
 
 <div class="space-y-1">
-	<!-- Selected range labels -->
+	<!-- Selected dates: click one to pick it from the browser's calendar -->
 	<div
 		class="flex justify-between text-[11px] tabular-nums transition-colors duration-150 {dragging
 			? 'text-primary'
 			: 'text-muted-foreground'}"
 	>
-		<span>{formatLabel(start)}</span>
-		<span>{formatLabel(end)}</span>
+		{#each HANDLES as handle (handle)}
+			<label
+				class="relative cursor-pointer overflow-hidden rounded py-1 underline decoration-dotted underline-offset-2 focus-within:ring-1 focus-within:ring-ring hover:text-foreground"
+			>
+				{formatLabel(handle === 'start' ? start : end)}
+				<!-- 16px text keeps iOS from zooming the page when the picker opens. -->
+				<input
+					type="date"
+					class="absolute inset-0 cursor-pointer text-base opacity-0"
+					aria-label="Pick {handle} date"
+					min={offsetToDate(limits(handle)[0])}
+					max={offsetToDate(limits(handle)[1])}
+					value={handle === 'start' ? start : end}
+					onclick={(e) => e.currentTarget.showPicker?.()}
+					onchange={(e) => pickDate(e.currentTarget, handle)}
+				/>
+			</label>
+		{/each}
 	</div>
 
 	<!-- Slider track -->
