@@ -220,33 +220,25 @@ try {
 	await until("JSON.parse(localStorage.getItem('screentime:prefs')).dateStart === '2024-01-29'");
 	await evaluate("localStorage.removeItem('screentime:prefs')");
 	await reload();
-	// Clicking a selected date opens the browser's calendar; a picked day moves that bound.
-	await evaluate(
-		`window.__pickers=[];HTMLInputElement.prototype.showPicker=function(){window.__pickers.push(this.getAttribute('aria-label'))}`
-	);
-	const pick = (label, value) =>
-		evaluate(
-			`(()=>{const i=document.querySelector('[aria-label="${label}"]');i.value='${value}';i.dispatchEvent(new Event('change',{bubbles:true}))})()`
-		);
+	// Clicking a selected date opens a calendar limited to the dates that handle may take.
+	const cell = (date) => `[data-slot=popover-content] td[data-value="${date}"]`;
+	const calendarClosed = "!document.querySelector('[data-slot=popover-content]')";
 	await click('[aria-label="Pick start date"]');
-	assert.deepEqual(
-		await evaluate('window.__pickers'),
-		['Pick start date'],
-		'clicking the start date opens a calendar'
-	);
-	await pick('Pick start date', '2026-08-01');
-	await until("JSON.parse(localStorage.getItem('screentime:prefs')).dateStart === '2026-08-01'");
+	await until(`document.querySelector('${cell('2026-07-08')}')?.hasAttribute('data-selected')`);
+	await click(`${cell('2026-07-20')} [data-bits-day]`);
+	await until("JSON.parse(localStorage.getItem('screentime:prefs')).dateStart === '2026-07-20'");
 	assert.equal((await prefs()).preset, '', 'a picked date selects Custom');
-	await pick('Pick end date', '2026-01-01');
-	await until("JSON.parse(localStorage.getItem('screentime:prefs')).dateEnd === '2026-08-02'");
-	// Clamping onto the current end changes no prop, so the input itself must be reset.
-	await pick('Pick end date', '2026-01-01');
-	await new Promise((resolve) => setTimeout(resolve, 150));
+	await until(calendarClosed);
+	await click('[aria-label="Pick end date"]');
+	await until(`document.querySelector('${cell('2026-10-06')}')?.hasAttribute('data-selected')`);
 	assert.equal(
-		await evaluate(`document.querySelector('[aria-label="Pick end date"]').value`),
-		'2026-08-02',
-		'an out-of-range pick clamps and the calendar reopens on that day'
+		await evaluate(`document.querySelector('${cell('2026-10-07')}').hasAttribute('data-disabled')`),
+		true,
+		'days past the data are disabled'
 	);
+	await click(`${cell('2026-10-01')} [data-bits-day]`);
+	await until("JSON.parse(localStorage.getItem('screentime:prefs')).dateEnd === '2026-10-01'");
+	await until(calendarClosed);
 	await send('Emulation.setDeviceMetricsOverride', {
 		width: 390,
 		height: 844,
